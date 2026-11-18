@@ -1,6 +1,10 @@
 """Tests for the safe, non-purchasing OVHcloud Eco cart probe."""
 
 import sys
+import hashlib
+import json
+from io import BytesIO
+from unittest.mock import MagicMock
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -106,6 +110,60 @@ class OrderProbeTests(unittest.TestCase):
     def test_token_is_required(self):
         with self.assertRaises(probe.OrderProbeError):
             probe.OVHCartClient("")
+
+    def test_ak_as_ck_credentials_must_be_complete(self):
+        with self.assertRaises(probe.OrderProbeError):
+            probe.OVHCartClient(application_key="ak")
+        with self.assertRaises(probe.OrderProbeError):
+            probe.OVHCartClient("bearer", application_key="ak", application_secret="as", consumer_key="ck")
+
+    def test_signed_headers_include_body_and_query(self):
+        client = probe.OVHCartClient(
+            application_key="ak", application_secret="as", consumer_key="ck"
+        )
+        client._clock_offset = 0
+        with patch.object(probe.time, "time", return_value=1234567890):
+            headers = client._signed_headers(
+                "POST", probe.BASE_URL + "/order/cart?ovhSubsidiary=PT", b'{"x":1}'
+            )
+        canonical = (
+            "as+ck+POST+" + probe.BASE_URL +
+            '/order/cart?ovhSubsidiary=PT+{"x":1}+1234567890'
+        )
+        self.assertEqual(headers["X-Ovh-Application"], "ak")
+        self.assertEqual(headers["X-Ovh-Consumer"], "ck")
+        self.assertEqual(headers["X-Ovh-Timestamp"], "1234567890")
+        self.assertEqual(
+            headers["X-Ovh-Signature"],
+            "$1$" + hashlib.sha1(canonical.encode()).hexdigest()
+        )
+
+    def test_signed_request_uses_ovh_server_time_and_never_places_order(self):
+        client = probe.OVHCartClient(
+            application_key="ak", application_secret="as", consumer_key="ck"
+        )
+        paths = []
+        def fake_open(request, timeout):
+            paths.append(request.full_url)
+            if request.full_url == probe.TIME_URL:
+                return BytesIO(b"1234567890")
+            self.assertEqual(request.get_header("X-ovh-application"), "ak")
+            self.assertIsNone(request.get_header("Authorization"))
+            return BytesIO(b'{"cartId":"cart-123"}')
+        with patch.object(probe.time, "time", return_value=1234567890), patch.object(
+            probe, "urlopen", side_effect=fake_open
+        ):
+            self.assertEqual(client.request("POST", "/order/cart", {"ovhSubsidiary": "PT"})["cartId"], "cart-123")
+        self.assertEqual(paths, [probe.TIME_URL, probe.BASE_URL + "/order/cart"])
+
+    def test_signed_client_blocks_checkout_post_before_time_request(self):
+        client = probe.OVHCartClient(
+            application_key="ak", application_secret="as", consumer_key="ck"
+        )
+        with patch.object(probe, "urlopen") as urlopen:
+            with self.assertRaises(probe.OrderProbeError):
+                client.request("POST", "/order/cart/cart-123/checkout", {})
+            urlopen.assert_not_called()
 
     def test_pt_only(self):
         fake = FakeClient()
