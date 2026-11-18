@@ -279,6 +279,31 @@ addon plan code (which ends in `-27skle06-v1`).
 The test's last step is a **GET** request to `/order/cart/{cartId}/checkout`.
 No purchase endpoint is present anywhere in the test-order API client.
 
+### Quote an exact available KS-LE-1 configuration (never purchase)
+
+The default KS-LE-1 addon selection can be out of stock even while another
+RAM/storage combination is available. For example, the public stock API showed
+`27skle01-v1.ram-32g-ddr3-noecc-1333.softraid-3x2000sa` as `1H-high` in
+BHS, but the default 16 GB RAM / two SSD configuration was unavailable.
+Pass the **exact FQN** from `--list-test-stock` with `--test-fqn`:
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --property=EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --test-order --test-plan ks-le-1 --datacenter bhs \
+  --test-fqn '27skle01-v1.ram-32g-ddr3-noecc-1333.softraid-3x2000sa'
+```
+
+Before creating any cart, this command re-queries the **public stock API**
+and requires the exact FQN and datacenter to report an orderable status.
+It then resolves both the memory and storage addon codes against the public
+Eco catalog, instead of using the defaults. If stock changed, it refuses to
+create a cart. A matching availability status is not a reservation and checkout
+quotation can still fail. The test deletes the temporary cart when possible,
+does **not** call POST checkout or payment endpoints and does not change the
+monitor's existing stock alert history. No new API credentials are needed.
+
 ### Find KS-LE-1 stock before testing a cart (no credentials)
 
 A checkout quotation can fail with HTTP 400 if the selected plan, memory,
