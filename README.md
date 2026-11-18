@@ -279,6 +279,35 @@ addon plan code (which ends in `-27skle06-v1`).
 The test's last step is a **GET** request to `/order/cart/{cartId}/checkout`.
 No purchase endpoint is present anywhere in the test-order API client.
 
+### Optional: safely test KS-LE-1 with real stock
+
+The current Eco cart API returns contract terms in each product offer's
+`prices` array. The cart probe selects only the nested `P1M` and `default`
+terms and rejects ambiguous offers. This also fixes the KS-LE-6 quote test.
+
+To test **KS-LE-1** (PT catalog plan `27skle01-v1`) independently of the
+KS-LE-6 stock monitor, use the product's **default storage configuration**
+from the public catalog:
+
+```bash
+cd /opt/ovh-ksle-monitor
+sudo git pull origin main
+python3 -m unittest discover -s tests -v
+
+sudo systemd-run --wait --pipe --collect \
+  --property=EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --test-order --test-plan ks-le-1 --storage default --datacenter bhs
+```
+
+If BHS does not accept the configuration, try another datacenter reported
+available for KS-LE-1. The public catalog decides the mandatory addons and
+valid datacenters. The command never calls `POST /order/cart/{cartId}/checkout`,
+does not create a paid order and deletes the temporary cart when possible.
+No new API permissions are needed. Without `--test-plan`, the command still
+tests KS-LE-6 preferred disks; the 30-second systemd monitor **always** remains
+on KS-LE-6.
+
 ## Troubleshooting
 
 | Symptom | Check |
