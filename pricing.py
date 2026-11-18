@@ -134,7 +134,7 @@ def cached_prices(path: Path, now: float | None = None) -> dict[str, str]:
     checked = old.get("checked_at", 0)
     cached = old.get("prices", {})
     cached = cached if isinstance(cached, dict) else {}
-    if now - checked < (TTL_SECONDS if cached else RETRY_SECONDS):
+    if old and now - checked < (TTL_SECONDS if cached else RETRY_SECONDS):
         return cached
     try:
         prices = extract_prices(fetch_catalog())
@@ -149,3 +149,42 @@ def cached_prices(path: Path, now: float | None = None) -> dict[str, str]:
         except OSError:
             LOG.warning("Unable to save price-cache retry timestamp")
         return {}
+
+
+def diagnostic_summary(data: dict) -> dict:
+    """Safe, limited structure summary for troubleshooting catalog parsing.
+
+    Prints no authentication credentials and no full catalog. Raw identifiers
+    and pricing fields are restricted to this KS-LE-6 and its mandatory addons.
+    """
+    result = {"currency": (data.get("locale") or {}).get("currencyCode"),
+              "plan_found": False, "base_pricings": [], "families": []}
+    plans = data.get("plans") or []
+    target = next((p for p in plans if isinstance(p, dict) and p.get("planCode") == PLAN), None)
+    if target is None:
+        return result
+    result["plan_found"] = True
+    result["base_pricings"] = [
+        {k: row.get(k) for k in ("duration", "pricingMode", "phase", "price", "interval")
+         if k in row}
+        for row in (target.get("pricings") or []) if isinstance(row, dict)
+    ][:12]
+    addons = {a.get("planCode"): a for a in (data.get("addons") or []) if isinstance(a, dict)}
+    for family in target.get("addonFamilies") or []:
+        if not isinstance(family, dict) or not family.get("mandatory"):
+            continue
+        name = family.get("name")
+        keys = family.get("addons") or []
+        code = keys[0] if name == "storage" and keys else family.get("default")
+        ref = addons.get(code, {})
+        result["families"].append({
+            "family": name, "default": family.get("default"),
+            "sample_code": code, "option_count": len(keys),
+            "sample_present": bool(ref),
+            "sample_pricings": [
+                {k: row.get(k) for k in ("duration", "pricingMode", "phase", "price", "interval")
+                 if k in row}
+                for row in (ref.get("pricings") or []) if isinstance(row, dict)
+            ][:6],
+        })
+    return result
