@@ -233,24 +233,30 @@ non-purchasing test result.
 This feature is completely separate from the regular `systemd` monitor timer.
 The timer does not read the token or attempt to order anything.
 
-### Authentication
+### Authentication (AK / AS / CK)
 
-Create a narrowly scoped OVHcloud EU API Bearer token, using the official
-[OVHcloud developer console](https://developers.eu.ovhcloud.com/).
-Give it permissions only for temporary cart operations: `GET` the public Eco
-catalog and cart Eco offers, `POST` cart creation/assignment, Eco item/options,
-item configurations, `GET` cart checkout and `DELETE` the test cart. **Do not
-grant POST checkout or payment permissions.**
+The temporary Eco cart probe supports the **three OVHcloud API credentials** created at [auth.eu.ovhcloud.com/api/createToken](https://auth.eu.ovhcloud.com/api/createToken): Application Key (AK), Application Secret (AS) and Consumer Key (CK). Requests are signed with `X-Ovh-Application`, `X-Ovh-Consumer`, `X-Ovh-Timestamp` and `X-Ovh-Signature`. To avoid clock-drift issues, it obtains the OVH server timestamp from `/1.0/auth/time`.
 
-Never put your token in GitHub, in `config.example`, or in the monitoring
-service environment. Put it in a separate root-only local file:
+Grant only: `GET /order/catalog/public/eco`, `POST /order/cart`, `POST /order/cart/*/assign`, `GET /order/cart/*/eco`, `POST /order/cart/*/eco`, `POST /order/cart/*/eco/options`, `POST /order/cart/*/item/*/configuration`, `GET /order/cart/*/checkout`, `DELETE /order/cart/*`. **Do not grant POST checkout or payment permissions.**
+
+Create a separate root-only file for the cart test (never overwrite an existing credential file without checking it first):
 
 ```bash
-sudo install -m 0600 order-config.example /etc/ovh-ksle-order.env
+cd /opt/ovh-ksle-monitor
+sudo install -m 0600 -o root -g root order-config.example /etc/ovh-ksle-order.env
 sudo nano /etc/ovh-ksle-order.env
-sudo chown root:root /etc/ovh-ksle-order.env
 sudo chmod 600 /etc/ovh-ksle-order.env
 ```
+
+Replace the three placeholders in `/etc/ovh-ksle-order.env` with your own AK/AS/CK values. Never put real secrets in the Git repository, logs, shell command line or chat.
+
+**Run tests before the real API call:**
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+These tests do not call the OVHcloud API or create a cart. A legacy `OVH_TOKEN` Bearer value is also supported if you already use OAuth2 access tokens, but do not set it when using AK/AS/CK.
 
 To test the **preferred disks** in **Beauharnois (BHS)**:
 
