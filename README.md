@@ -23,6 +23,46 @@ No external Python packages, database, Docker, or OVHcloud API credentials are r
 
 The first live check emails any currently available options. An empty or malformed API response causes a visible error; it cannot erase alert history. It only notifies: it never orders or reserves a server. Fast restocks may still be missed between polls. The API status does not guarantee a successful checkout.
 
+## OVH Mail SMTP configuration (Basketly sender)
+
+This application uses `SMTP_*` systemd environment variables (not Django's `EMAIL_HOST` settings). OVH's port **587** uses **STARTTLS**, so set `SMTP_SECURITY=starttls` (not `ssl`). The email sender is `Basketly <donotreply@basketly.eu>` and the envelope SMTP account can be `donotreply@basketly.eu` if it has sending permission. Set `SMTP_TO` to **your actual recipient address**.
+
+Create a **local, root-only** environment file named **`/etc/ovh-ksle-monitor.env`**, *outside the Git repository*. Example:
+
+```ini
+SMTP_HOST=smtp.mail.ovh.net
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USERNAME=donotreply@basketly.eu
+SMTP_PASSWORD=REPLACE_WITH_YOUR_SMTP_PASSWORD
+SMTP_FROM="Basketly <donotreply@basketly.eu>"
+SMTP_TO=your-personal-email@example.com
+SMTP_TIMEOUT=15
+HTTP_TIMEOUT=15
+```
+
+Run this from your checked-out project after `git pull origin main`:
+
+```bash
+sudo install -m 0600 config.example /etc/ovh-ksle-monitor.env
+sudo nano /etc/ovh-ksle-monitor.env
+sudo chown root:root /etc/ovh-ksle-monitor.env
+sudo chmod 600 /etc/ovh-ksle-monitor.env
+sudo install -m 0644 ksle_monitor.py /opt/ovh-ksle-monitor/ksle_monitor.py
+```
+
+If the monitor is already installed, **do not overwrite your existing credential file** with `install config.example`; just edit the existing `/etc/ovh-ksle-monitor.env` instead.
+
+The service already loads the file through `EnvironmentFile=/etc/ovh-ksle-monitor.env`. Test email delivery without any stock/state changes:
+
+```bash
+sudo systemd-run --wait --pipe --collect \\
+  --property=EnvironmentFile=/etc/ovh-ksle-monitor.env \\
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py --send-test-email
+```
+
+Use `sudo journalctl -u ovh-ksle-monitor.service -n 40 --no-pager` for subsequent stock-check logs. Do not paste SMTP secrets into chat or check them into version control.
+
 ## Requirements
 
 - Ubuntu/Debian or another Linux with `systemd` and **Python 3.10 or later**.
@@ -42,7 +82,7 @@ sudo install -m 0600 config.example /etc/ovh-ksle-monitor.env
 sudo nano /etc/ovh-ksle-monitor.env
 ```
 
-Update `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, and `SMTP_TO` with your real details. Use a dedicated SMTP/app password. Set `SMTP_TO` to comma-separated addresses if you want several recipients. If your TLS-protected SMTP relay needs no authentication, leave **both** username and password empty. Keep the `/etc/ovh-ksle-monitor.env` file owner-root and permission `0600`.
+Update `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_TO` with your real details. Use a dedicated SMTP/app password. Set `SMTP_TO` to comma-separated addresses if you want several recipients. If your TLS-protected SMTP relay needs no authentication, leave **both** username and password empty. Keep the `/etc/ovh-ksle-monitor.env` file owner-root and permission `0600`.
 
 For OVH SMTP submission, use the host and credentials from the **actual mail service you own**. Do not assume the hostname or port is the same for every OVH offer. The service requires verified TLS, including when using an unauthenticated relay.
 
