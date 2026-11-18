@@ -69,6 +69,8 @@ On a **new stock alert only**, the monitor consults the publicly available OVHcl
 
 Prices, when available and unambiguous, are labeled **"EUR/mês sem IVA (estimativa de catálogo)"** in both HTML and plain-text emails. **They are not checkout quotes** and can omit location-specific fees, setup fees, promotional adjustments or taxes. If any required price is missing, ambiguous or the catalog cannot be reached, the email says **"Preço indisponível — confirmar no checkout"**. Price lookup failure does not stop stock alerts; failed queries are not retried more than once per hour. Existing alert history and stock backoff are preserved. No changes to `/etc/ovh-ksle-monitor.env` are required.
 
+To inspect available catalog prices **without sending email**, run `python3 ksle_monitor.py --list-prices` from the project directory. This fetches the public catalog only if the cache is due.
+
 Install the new `pricing.py` module alongside `ksle_monitor.py` (or pull the repository if it is already cloned in `/opt/ovh-ksle-monitor`):
 
 ```bash
