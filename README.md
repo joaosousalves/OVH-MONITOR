@@ -227,8 +227,13 @@ can prepare and quote a **temporary Eco cart** for the KS-LE-6. It will:
 **It never calls POST checkout, never creates a paid order, and never charges a
 payment method.** A successfully quoted cart does not reserve stock, and a
 quote is not a guarantee that a subsequent purchase will succeed. With stock
-unavailable, the API may reject the add-to-cart step, which is an expected
-non-purchasing test result.
+unavailable, the API may not offer the plan at all, which is an expected
+non-purchasing test result. When no exact `P1M/default` offer is found,
+the program reports the number of Eco offers returned, matches for KS-LE-6,
+and a short sample of `planCode/duration/pricingMode` fields. It does not
+log the full cart response or any API credentials. **An empty offer list is
+not an authentication error after cart creation/assignment succeeds.**
+The temporary cart is still deleted on failure.
 
 This feature is completely separate from the regular `systemd` monitor timer.
 The timer does not read the token or attempt to order anything.
