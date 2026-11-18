@@ -7,10 +7,12 @@ are deliberately unsupported. A temporary test cart is deleted on exit.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -18,6 +20,7 @@ from urllib.request import Request, urlopen
 
 
 BASE_URL = "https://api.eu.ovhcloud.com/v1"
+TIME_URL = "https://api.eu.ovhcloud.com/1.0/auth/time"
 PLAN_CODE = "27skle06-v1"
 PREFERRED_STORAGE_OPTION = "hybridsoftraid-2x4000sa-2x500nvme-27skle06-v1"
 DATACENTERS = {"bhs", "fra", "gra", "lon", "rbx", "sbg", "waw"}
@@ -48,11 +51,57 @@ class OrderProbeError(Exception):
 
 
 class OVHCartClient:
-    def __init__(self, bearer_token: str, timeout: int = 20):
-        if not bearer_token or bearer_token.isspace():
-            raise OrderProbeError("OVH_TOKEN must be configured before testing a cart")
+    def __init__(self, bearer_token: str = "", timeout: int = 20, *,
+                 application_key: str = "", application_secret: str = "",
+                 consumer_key: str = ""):
+        """Use signed OVH AK/AS/CK credentials or an existing Bearer token."""
+        credentials = (application_key, application_secret, consumer_key)
+        if any(credentials):
+            if not all(credentials) or bearer_token:
+                raise OrderProbeError("Supply all three OVH API keys, without OVH_TOKEN")
+            self.signed = True
+        elif bearer_token and not bearer_token.isspace():
+            self.signed = False
+        else:
+            raise OrderProbeError(
+                "Set OVH_APPLICATION_KEY, OVH_APPLICATION_SECRET, OVH_CONSUMER_KEY "
+                "or a valid OVH_TOKEN"
+            )
         self.token = bearer_token
+        self.application_key = application_key
+        self.application_secret = application_secret
+        self.consumer_key = consumer_key
         self.timeout = timeout
+        self._clock_offset: float | None = None
+
+    def _timestamp(self) -> str:
+        """Use OVH server time, to prevent signed requests failing due to clock drift."""
+        if self._clock_offset is None:
+            try:
+                req = Request(TIME_URL, headers={"Accept": "application/json"})
+                before = time.time()
+                with urlopen(req, timeout=self.timeout) as resp:
+                    raw = resp.read(64).decode("ascii").strip()
+                after = time.time()
+                remote_time = int(raw)
+                self._clock_offset = remote_time - ((before + after) / 2)
+            except (HTTPError, URLError, OSError, ValueError, UnicodeError) as exc:
+                raise OrderProbeError("Could not obtain OVHcloud API signing timestamp") from exc
+        return str(int(time.time() + self._clock_offset))
+
+    def _signed_headers(self, method: str, url: str, body: bytes | None) -> dict[str, str]:
+        timestamp = self._timestamp()
+        signing_text = "+".join((
+            self.application_secret, self.consumer_key, method, url,
+            body.decode("utf-8") if body is not None else "", timestamp,
+        ))
+        signature = "$1$" + hashlib.sha1(signing_text.encode("utf-8")).hexdigest()
+        return {
+            "X-Ovh-Application": self.application_key,
+            "X-Ovh-Consumer": self.consumer_key,
+            "X-Ovh-Timestamp": timestamp,
+            "X-Ovh-Signature": signature,
+        }
 
     def request(self, method: str, path: str, payload: dict | None = None,
                 query: dict | None = None) -> Any:
@@ -67,7 +116,10 @@ class OVHCartClient:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         headers = {"Accept": "application/json", "User-Agent": "ksle-monitor/1.1"}
         if path != "/order/catalog/public/eco":
-            headers["Authorization"] = f"Bearer {self.token}"
+            if self.signed:
+                headers.update(self._signed_headers(method, url, body))
+            else:
+                headers["Authorization"] = f"Bearer {self.token}"
         if payload is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=body, method=method, headers=headers)
@@ -216,12 +268,14 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
 
 def run_test_order(datacenter: str, storage: str) -> int:
     token = os.getenv("OVH_TOKEN", "").strip()
-    if not token:
-        LOGGER.error("OVH_TOKEN missing; configure it locally in a protected environment file")
-        return 1
+    ak = os.getenv("OVH_APPLICATION_KEY", "").strip()
+    secret = os.getenv("OVH_APPLICATION_SECRET", "").strip()
+    ck = os.getenv("OVH_CONSUMER_KEY", "").strip()
     storage_code = PREFERRED_STORAGE_OPTION if storage == "preferred" else storage
-    client = OVHCartClient(token)
     try:
+        client = OVHCartClient(
+            token, application_key=ak, application_secret=secret, consumer_key=ck
+        )
         result = test_order(client, datacenter=datacenter, storage_option=storage_code)
         print(result)
         return 0
