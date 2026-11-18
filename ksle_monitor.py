@@ -514,13 +514,15 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
     parser.add_argument("--datacenter", default="bhs", help="Datacenter for --test-order (default: bhs)")
     parser.add_argument("--storage", default="preferred", help="Storage addon code for --test-order (default: preferred)")
+    parser.add_argument("--test-plan", choices=("ks-le-6", "ks-le-1"), default="ks-le-6",
+                        help="Product for manual --test-order only; stock timer remains KS-LE-6")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         if args.test_order:
             from order_probe import run_test_order
-            return run_test_order(args.datacenter, args.storage)
+            return run_test_order(args.datacenter, args.storage, args.test_plan)
         if args.diagnose_prices:
             from pricing import fetch_catalog, diagnostic_summary
             print(json.dumps(diagnostic_summary(fetch_catalog()), indent=2))
