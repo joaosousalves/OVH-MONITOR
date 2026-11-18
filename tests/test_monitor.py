@@ -38,6 +38,38 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(stocks[0].datacenter, "bhs")
         self.assertTrue(all(s.available for s in stocks))
 
+    def test_ks_le_1_stock_parser_with_explicit_plan(self):
+        plan = "27skle01-v1"
+        fqn = plan + ".ram-16g-ddr3-noecc-1333.softraid-2x480ssd"
+        payload = [{
+            "planCode": plan,
+            "fqn": fqn,
+            "storage": "softraid-2x480ssd",
+            "datacenters": [
+                {"datacenter": "bhs", "availability": "unavailable"},
+                {"datacenter": "gra", "availability": "72H"},
+            ],
+        }]
+        found = monitor.parse_stock(payload, plan_code=plan)
+        self.assertEqual(len(found), 2)
+        self.assertEqual({s.datacenter for s in found if s.available}, {"gra"})
+        self.assertTrue(all(s.fqn == fqn for s in found))
+        with self.assertRaises(monitor.MonitorError):
+            monitor.parse_stock(payload)  # Default still checks KS-LE-6.
+
+    def test_list_test_stock_is_read_only_and_plan_specific(self):
+        plan = "27skle01-v1"
+        fqn = plan + ".ram-16g-ddr3-noecc-1333.softraid-2x480ssd"
+        stocks = [monitor.Stock(fqn, "softraid-2x480ssd", "gra", "72H")]
+        with patch.object(monitor, "retrieve_stock", return_value=stocks) as fetch:
+            with patch.object(monitor, "send_mail") as send:
+                with patch("builtins.print") as output:
+                    rc = monitor.main(["--list-test-stock", "--test-plan", "ks-le-1"])
+        self.assertEqual(rc, 0)
+        fetch.assert_called_once_with(plan_code=plan)
+        send.assert_not_called()
+        self.assertIn(fqn, output.call_args.args[0])
+
     def test_non_orderable_statuses_are_not_available(self):
         for status in ["unavailable", "unknown", "comingSoon", "weird"]:
             with self.subTest(status=status):
