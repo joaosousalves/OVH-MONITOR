@@ -1,0 +1,4 @@
+# OPTIONAL: use only for the manual --test-order command, never the timer.
+# Obtain a scoped Bearer API token from the official OVHcloud EU API console.
+# Do not commit your real token to GitHub or paste it into chat.
+OVH_TOKEN=replace-with-your-scoped-ovhcloud-api-token
