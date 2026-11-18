@@ -63,6 +63,17 @@ sudo systemd-run --wait --pipe --collect \\
 
 Use `sudo journalctl -u ovh-ksle-monitor.service -n 40 --no-pager` for subsequent stock-check logs. Do not paste SMTP secrets into chat or check them into version control.
 
+## Troubleshooting missing catalog prices
+
+If `--list-prices` returns zero verified layouts, run:
+
+```bash
+cd /opt/ovh-ksle-monitor
+python3 ksle_monitor.py --diagnose-prices
+```
+
+This requests a fresh public Eco catalog and prints a restricted, non-secret summary: currency, KS-LE-6 monthly pricing fields and the mandatory addon family's first candidate. Share that output to identify schema differences. It never creates a cart or order, and does not alter the monitor's 30-second stock timer. The pricing cache now also correctly refreshes on first use in a new state directory.
+
 ## Prices in stock alerts (Portugal)
 
 On a **new stock alert only**, the monitor consults the publicly available OVHcloud Eco catalog for subsidiary `PT`, and caches monthly pricing for **6 hours** in `/var/lib/ovh-ksle-monitor/pricing-cache.json`. For each storage option the monitor tries to calculate the monthly plan **plus all mandatory default addons** using the standard monthly `P1M` / `default` pricing. The stock endpoint itself does not return prices. No API token or cart operation is needed for the public catalog.
