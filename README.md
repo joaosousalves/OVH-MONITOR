@@ -279,6 +279,28 @@ addon plan code (which ends in `-27skle06-v1`).
 The test's last step is a **GET** request to `/order/cart/{cartId}/checkout`.
 No purchase endpoint is present anywhere in the test-order API client.
 
+### Find KS-LE-1 stock before testing a cart (no credentials)
+
+A checkout quotation can fail with HTTP 400 if the selected plan, memory,
+storage and datacenter are out of stock. This is expected even when cart
+creation and option selection worked. Query the public availability endpoint
+for the test plan, **without creating a cart**:
+
+```bash
+cd /opt/ovh-ksle-monitor
+python3 ksle_monitor.py --list-test-stock --test-plan ks-le-1
+```
+
+The command prints one full hardware FQN per datacenter along with the API
+availability status. Compare it to the FQN in the checkout error. For example,
+`27skle01-v1.ram-16g-ddr3-noecc-1333.softraid-2x480ssd` in `GRA` must
+be available (not `unavailable`) before trying a GRA quote with the default
+KS-LE-1 storage. A different storage FQN is **not** a match for the default
+cart configuration; an explicit storage addon code would be required.
+
+The lookup is manual, read-only, uses the public stock API, and does **not**
+modify the KS-LE-6 timer's alert state, SMTP settings, or ordering credentials.
+
 ### Optional: safely test KS-LE-1 with real stock
 
 The current Eco cart API returns contract terms in each product offer's
