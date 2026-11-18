@@ -45,9 +45,11 @@ class PriceTests(unittest.TestCase):
         data["addons"] = data["addons"][:-1]
         self.assertEqual(pricing.extract_prices(data), {})
 
-    def test_ambiguous_monthly_quote_hides_price(self):
+    def test_conflicting_monthly_quote_hides_price(self):
         data = fixture()
-        data["addons"][0]["pricings"].append(data["addons"][0]["pricings"][0].copy())
+        conflicting = data["addons"][0]["pricings"][0].copy()
+        conflicting["price"] += 100000000
+        data["addons"][0]["pricings"].append(conflicting)
         self.assertEqual(pricing.extract_prices(data), {})
 
     def test_non_eur_catalog_rejected(self):
