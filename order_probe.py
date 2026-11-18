@@ -351,8 +351,12 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
         raise OrderProbeError("Unsupported cart-test product")
     if target_fqn is not None:
         parse_hardware_fqn(target_fqn, plan_code)
-        if storage_option not in ("preferred", "default"):
-            raise OrderProbeError("Use --test-fqn alone to select RAM and storage")
+        # The CLI converts its default --storage preferred to the
+        # KS-LE-6 addon code before calling this function. When --test-fqn
+        # is set, that implicit default must NOT block exact FQN selection.
+        # Explicit alternative storage codes still fail closed.
+        if storage_option not in ("preferred", "default", PREFERRED_STORAGE_OPTION):
+            raise OrderProbeError("Do not combine --test-fqn with a different --storage value")
     elif plan_code != PLAN_CODE and storage_option == PREFERRED_STORAGE_OPTION:
         raise OrderProbeError("Use --storage default for KS-LE-1")
     catalog = client.request("GET", "/order/catalog/public/eco", query={"ovhSubsidiary": subsidiary})
