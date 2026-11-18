@@ -115,6 +115,34 @@ class MonitorTests(unittest.TestCase):
                 send.assert_not_called()
             self.assertFalse(path.exists())
 
+
+    def test_html_content_and_preference_badge(self):
+        stocks = monitor.parse_stock(response("1H-high", "72H"))
+        html = monitor.alert_html(stocks)
+        self.assertIn("DISCOS PREFERIDOS", html)
+        self.assertIn("BHS", html)
+        self.assertIn("GRA", html)
+        self.assertIn("Ver servidor na OVHcloud", html)
+        self.assertIn(monitor.PRODUCT_URL, html)
+        self.assertLess(html.index("DISCOS PREFERIDOS"), html.index("2 x 1.92 TB NVMe"))
+
+    def test_html_escapes_api_values(self):
+        malicious = monitor.Stock("fqn", monitor.PREFERRED_STORAGE, '<script>alert(1)</script>', '1H-high')
+        html = monitor.alert_html([malicious], test=True)
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;SCRIPT&gt;", html)
+        self.assertIn("EMAIL DE TESTE", html)
+
+    def test_multipart_email_contains_plain_and_html(self):
+        config = monitor.MailConfig("smtp", 587, "starttls", "", "", "sender@example.com", ("to@example.com",))
+        with patch.object(monitor.smtplib, "SMTP") as smtp:
+            smtp.return_value.__enter__.return_value.send_message.return_value = {}
+            monitor.send_mail(config, "Subject", "Plain fallback", "<b>HTML</b>")
+            message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+            self.assertEqual(message.get_content_type(), "multipart/alternative")
+            self.assertEqual(message.get_body(preferencelist=("plain",)).get_content().strip(), "Plain fallback")
+            self.assertIn("<b>HTML</b>", message.get_body(preferencelist=("html",)).get_content())
+
     def test_partially_refused_smtp_recipients_is_failure(self):
         config = monitor.MailConfig("smtp", 587, "starttls", "", "", "sender@example.com", ("a@example.com",))
         with patch.object(monitor.smtplib, "SMTP") as smtp:
