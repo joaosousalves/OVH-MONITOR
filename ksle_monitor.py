@@ -509,6 +509,7 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--check", action="store_true", help="Check stock without sending email or changing history")
     group.add_argument("--list", action="store_true", help="Print all API-reported locations and configurations")
     group.add_argument("--list-prices", action="store_true", help="Show cached public monthly catalog estimates (no cart)")
+    group.add_argument("--diagnose-prices", action="store_true", help="Inspect KS-LE-6 public catalog price structure without credentials")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
     group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
     parser.add_argument("--datacenter", default="bhs", help="Datacenter for --test-order (default: bhs)")
@@ -520,6 +521,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.test_order:
             from order_probe import run_test_order
             return run_test_order(args.datacenter, args.storage)
+        if args.diagnose_prices:
+            from pricing import fetch_catalog, diagnostic_summary
+            print(json.dumps(diagnostic_summary(fetch_catalog()), indent=2))
+            return 0
         if args.list_prices:
             from pricing import cached_prices
             prices = cached_prices(state_path().with_name("pricing-cache.json"))
