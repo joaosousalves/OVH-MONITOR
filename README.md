@@ -65,7 +65,9 @@ Use `sudo journalctl -u ovh-ksle-monitor.service -n 40 --no-pager` for subsequen
 
 ## Troubleshooting missing catalog prices
 
-If `--list-prices` returns zero verified layouts, run:
+The monthly price parser now reads the recurring one-month entries (`phase=1`, `interval=1`) and ignores annual or 24-month commitments. It tolerates identical repeated monthly entries from the bandwidth addon. The corrected cache format invalidates pre-fix pricing entries automatically after an update.
+
+If `--list-prices` still returns zero verified layouts, run:
 
 ```bash
 cd /opt/ovh-ksle-monitor
@@ -76,7 +78,7 @@ This requests a fresh public Eco catalog and prints a restricted, non-secret sum
 
 ## Prices in stock alerts (Portugal)
 
-On a **new stock alert only**, the monitor consults the publicly available OVHcloud Eco catalog for subsidiary `PT`, and caches monthly pricing for **6 hours** in `/var/lib/ovh-ksle-monitor/pricing-cache.json`. For each storage option the monitor tries to calculate the monthly plan **plus all mandatory default addons** using the standard monthly `P1M` / `default` pricing. The stock endpoint itself does not return prices. No API token or cart operation is needed for the public catalog.
+On a **new stock alert only**, the monitor consults the publicly available OVHcloud Eco catalog for subsidiary `PT`, and caches monthly pricing for **6 hours** in `/var/lib/ovh-ksle-monitor/pricing-cache.json`. For each storage option the monitor tries to calculate the monthly plan **plus all mandatory default addons** using the current Eco catalog recurring monthly pricing (`phase=1`, `interval=1`; older schemas may expose `P1M`). The stock endpoint itself does not return prices. No API token or cart operation is needed for the public catalog.
 
 Prices, when available and unambiguous, are labeled **"EUR/mês sem IVA (estimativa de catálogo)"** in both HTML and plain-text emails. **They are not checkout quotes** and can omit location-specific fees, setup fees, promotional adjustments or taxes. If any required price is missing, ambiguous or the catalog cannot be reached, the email says **"Preço indisponível — confirmar no checkout"**. Price lookup failure does not stop stock alerts; failed queries are not retried more than once per hour. Existing alert history and stock backoff are preserved. No changes to `/etc/ovh-ksle-monitor.env` are required.
 
