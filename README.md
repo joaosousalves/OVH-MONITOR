@@ -37,6 +37,7 @@ From the extracted `ovh-ksle6-monitor` folder:
 ```bash
 sudo install -d -m 0755 /opt/ovh-ksle-monitor
 sudo install -m 0644 ksle_monitor.py /opt/ovh-ksle-monitor/ksle_monitor.py
+sudo install -m 0644 order_probe.py /opt/ovh-ksle-monitor/order_probe.py
 sudo install -m 0600 config.example /etc/ovh-ksle-monitor.env
 sudo nano /etc/ovh-ksle-monitor.env
 ```
@@ -114,6 +115,62 @@ python3 -m unittest discover -s tests -v
 ```
 
 All tests use mocked data and SMTP; they do not send email or call OVHcloud.
+
+## Optional: test OVHcloud API ordering without purchasing
+
+The manual `--test-order` command can test whether your OVHcloud Portugal account
+can prepare and quote a **temporary Eco cart** for the KS-LE-6. It will:
+
+1. Confirm the server and selected addons exist in the public PT catalog.
+2. Create and assign a temporary cart to your account.
+3. Look for the monthly `P1M`/`default` offer, add **one** server, its mandatory
+   addons and its selected datacenter configurations.
+4. Read the **GET checkout quotation** and show the total including VAT.
+5. Delete the temporary cart on exit, including after errors when possible.
+
+**It never calls POST checkout, never creates a paid order, and never charges a
+payment method.** A successfully quoted cart does not reserve stock, and a
+quote is not a guarantee that a subsequent purchase will succeed. With stock
+unavailable, the API may reject the add-to-cart step, which is an expected
+non-purchasing test result.
+
+This feature is completely separate from the regular `systemd` monitor timer.
+The timer does not read the token or attempt to order anything.
+
+### Authentication
+
+Create a narrowly scoped OVHcloud EU API Bearer token, using the official
+[OVHcloud developer console](https://developers.eu.ovhcloud.com/).
+Give it permissions only for temporary cart operations: `GET` the public Eco
+catalog and cart Eco offers, `POST` cart creation/assignment, Eco item/options,
+item configurations, `GET` cart checkout and `DELETE` the test cart. **Do not
+grant POST checkout or payment permissions.**
+
+Never put your token in GitHub, in `config.example`, or in the monitoring
+service environment. Put it in a separate root-only local file:
+
+```bash
+sudo install -m 0600 order-config.example /etc/ovh-ksle-order.env
+sudo nano /etc/ovh-ksle-order.env
+sudo chown root:root /etc/ovh-ksle-order.env
+sudo chmod 600 /etc/ovh-ksle-order.env
+```
+
+To test the **preferred disks** in **Beauharnois (BHS)**:
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --property=EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py --test-order --datacenter bhs
+```
+
+Replace `bhs` with `gra`, `rbx`, `fra`, `sbg`, `waw`, or `lon` for another
+datacenter. The preferred storage is `2 × 512 GB NVMe + 2 × 4 TB HDD`. To test
+another disk configuration, use `--storage` with the corresponding full catalog
+addon plan code (which ends in `-27skle06-v1`).
+
+The test's last step is a **GET** request to `/order/cart/{cartId}/checkout`.
+No purchase endpoint is present anywhere in the test-order API client.
 
 ## Troubleshooting
 
