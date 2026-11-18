@@ -144,6 +144,85 @@ class OrderProbeTests(unittest.TestCase):
                 "planCode": "other-plan", "duration": "P1M", "pricingMode": "default"
             }])
 
+    def test_nested_eco_prices_array_selects_monthly_only(self):
+        offers = [{
+            "planCode": probe.PLAN_CODE,
+            "productName": "KS-LE-6",
+            "prices": [
+                {"duration": "P12M", "pricingMode": "default", "interval": 12},
+                {"duration": "P1M", "pricingMode": "default", "interval": 1},
+                {"duration": "P24M", "pricingMode": "default", "interval": 24},
+            ],
+        }]
+        self.assertEqual(
+            probe.find_monthly_offer(offers),
+            {"planCode": probe.PLAN_CODE, "duration": "P1M", "pricingMode": "default"},
+        )
+
+    def test_nested_eco_prices_array_refuses_annual_only(self):
+        with self.assertRaises(probe.OrderProbeError):
+            probe.find_monthly_offer([{
+                "planCode": probe.PLAN_CODE,
+                "prices": [{"duration": "P12M", "pricingMode": "default"}],
+            }])
+
+    def test_nested_eco_prices_array_refuses_ambiguous_monthly(self):
+        with self.assertRaises(probe.OrderProbeError):
+            probe.find_monthly_offer([{
+                "planCode": probe.PLAN_CODE,
+                "prices": [
+                    {"duration": "P1M", "pricingMode": "default"},
+                    {"duration": "P1M", "pricingMode": "default"},
+                ],
+            }])
+
+    def test_ks_le_1_cart_uses_own_default_disks_without_checkout_post(self):
+        ks_plan = probe.TEST_PLANS["ks-le-1"]
+        disk_code = "softraid-3x2000sa-" + ks_plan
+        new_plan = {
+            "planCode": ks_plan,
+            "configurations": CATALOG["plans"][0]["configurations"],
+            "addonFamilies": [
+                {"name": "storage", "mandatory": True,
+                 "addons": [disk_code], "default": disk_code},
+                {"name": "memory", "mandatory": True,
+                 "addons": ["ram-ks1"], "default": "ram-ks1"},
+            ],
+        }
+        fake = FakeClient(offers=[{
+            "planCode": ks_plan,
+            "prices": [
+                {"duration": "P12M", "pricingMode": "default"},
+                {"duration": "P1M", "pricingMode": "default"},
+            ],
+        }])
+        with patch.dict(CATALOG, {"plans": CATALOG["plans"] + [new_plan]}):
+            result = probe.test_order(fake, storage_option="default", plan_code=ks_plan)
+        self.assertIn(ks_plan, result)
+        eco_posts = [body for method, path, body, _ in fake.calls
+                     if method == "POST" and path.endswith("/eco")]
+        self.assertEqual(len(eco_posts), 1)
+        self.assertEqual(eco_posts[0]["planCode"], ks_plan)
+        self.assertEqual(eco_posts[0]["duration"], "P1M")
+        self.assertTrue(any(method == "POST" and path.endswith("/eco/options")
+                            and body["planCode"] == disk_code
+                            for method, path, body, _ in fake.calls))
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in fake.calls))
+
+    def test_ks_le_1_requires_explicit_default_storage(self):
+        fake = FakeClient()
+        with self.assertRaises(probe.OrderProbeError):
+            probe.test_order(fake, plan_code=probe.TEST_PLANS["ks-le-1"])
+        self.assertFalse(fake.calls)
+
+    def test_unapproved_cart_test_plan_blocked(self):
+        fake = FakeClient()
+        with self.assertRaises(probe.OrderProbeError):
+            probe.test_order(fake, plan_code="unapproved", storage_option="default")
+        self.assertFalse(fake.calls)
+
     def test_no_monthly_offer_cleans_up_cart(self):
         fake = FakeClient(offers=[])
         with self.assertRaises(probe.OrderProbeError):
