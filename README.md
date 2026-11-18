@@ -1,6 +1,6 @@
 # OVHcloud KS-LE-6 availability monitor
 
-Standalone Python 3 service for Linux. It checks the official, public OVHcloud stock API every three minutes and sends an SMTP email when **any** KS-LE-6 storage configuration becomes available at **any** datacenter. Your preferred option is highlighted first:
+Standalone Python 3 service for Linux. It checks the official, public OVHcloud stock API every 30 seconds and sends an SMTP email when **any** KS-LE-6 storage configuration becomes available at **any** datacenter. Your preferred option is highlighted first:
 
 - **Preferred:** 2 × 512 GB NVMe + 2 × 4 TB HDD (`hybridsoftraid-2x4000sa-2x500nvme`)
 - Also alerts: 2 × 1.92 TB NVMe; 3 × 1 TB NVMe; 4 × 960 GB SATA SSD.
@@ -143,16 +143,37 @@ sudo systemctl enable --now ovh-ksle-monitor.timer
 
 Alert history survives restarts, reboots, and service upgrades. If you ever **intentionally** want to send alerts again for configurations still in stock, stop the timer first and use an administrator to move (rather than delete) `/var/lib/ovh-ksle-monitor/state.json` to a backup. On the next live run a new history file will be created. Don't reset history during normal updates.
 
+## API cooldown and rate limiting
+
+The default systemd timer now runs **30 seconds after the previous service execution completes**, plus an initial check 30 seconds after boot. It does not overlap checks.
+
+If the stock API returns **HTTP 429**, **HTTP 5xx**, or a temporary connection error, the monitor saves its API cooldown separately as `/var/lib/ovh-ksle-monitor/api-backoff.json`. Delay increases exponentially (60 s, 120 s, 240 s, etc., up to 30 minutes), and respects any longer `Retry-After` value (up to 24 hours). During cooldown, timer executions exit without requesting the stock API. A successful response resets the backoff counter. Existing stock alert history remains unchanged. Manual `--check` and `--list` bypass cooldown for diagnostics, so don't run them repeatedly during rate limiting.
+
+**Updating an existing installation:** `git pull origin main` alone does not update the active systemd timer. Reinstall both the application and timer, then reload and restart:
+
+```bash
+cd /opt/ovh-ksle-monitor
+sudo git pull origin main
+sudo install -m 0644 ksle_monitor.py /opt/ovh-ksle-monitor/ksle_monitor.py
+sudo install -m 0644 systemd/ovh-ksle-monitor.timer /etc/systemd/system/ovh-ksle-monitor.timer
+sudo systemctl daemon-reload
+sudo systemctl restart ovh-ksle-monitor.timer
+systemctl list-timers ovh-ksle-monitor.timer
+sudo journalctl -u ovh-ksle-monitor.service -n 30 --no-pager
+```
+
+If you previously created a timer override via `sudo systemctl edit ovh-ksle-monitor.timer`, inspect it with `systemctl cat ovh-ksle-monitor.timer`; it may supersede the packaged schedule. Don't remove custom overrides without inspecting them.
+
 ## Change polling frequency
 
-Edit the installed timer's `OnCalendar` expression. For example, `*:0/5` is every 5 minutes. Then run:
+Edit the installed timer's `OnUnitInactiveSec` setting. For example, `OnUnitInactiveSec=60s` checks approximately 60 seconds after the previous run finishes. Then run:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart ovh-ksle-monitor.timer
 ```
 
-Avoid overly aggressive polling; respect OVHcloud's service terms and any future rate limits. This package defaults to three minutes.
+Avoid overly aggressive polling; respect OVHcloud's service terms and any future rate limits. This package defaults to 30 seconds, with persistent API cooldown.
 
 ## Run tests
 
