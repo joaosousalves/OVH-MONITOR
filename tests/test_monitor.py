@@ -162,7 +162,7 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(monitor.retry_after_seconds("3600"), 3600)
         self.assertEqual(monitor.retry_after_seconds("invalid"), None)
         self.assertEqual(monitor.retry_after_seconds("Wed, 18 Nov 2026 23:00:00 GMT",
-                            now=1795041000), 3000)
+                            now=1795041000), 1800)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "api-backoff.json"
             self.assertEqual(monitor.apply_api_failure(
