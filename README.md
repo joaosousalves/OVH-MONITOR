@@ -63,6 +63,20 @@ sudo systemd-run --wait --pipe --collect \\
 
 Use `sudo journalctl -u ovh-ksle-monitor.service -n 40 --no-pager` for subsequent stock-check logs. Do not paste SMTP secrets into chat or check them into version control.
 
+## Prices in stock alerts (Portugal)
+
+On a **new stock alert only**, the monitor consults the publicly available OVHcloud Eco catalog for subsidiary `PT`, and caches monthly pricing for **6 hours** in `/var/lib/ovh-ksle-monitor/pricing-cache.json`. For each storage option the monitor tries to calculate the monthly plan **plus all mandatory default addons** using the standard monthly `P1M` / `default` pricing. The stock endpoint itself does not return prices. No API token or cart operation is needed for the public catalog.
+
+Prices, when available and unambiguous, are labeled **"EUR/mês sem IVA (estimativa de catálogo)"** in both HTML and plain-text emails. **They are not checkout quotes** and can omit location-specific fees, setup fees, promotional adjustments or taxes. If any required price is missing, ambiguous or the catalog cannot be reached, the email says **"Preço indisponível — confirmar no checkout"**. Price lookup failure does not stop stock alerts; failed queries are not retried more than once per hour. Existing alert history and stock backoff are preserved. No changes to `/etc/ovh-ksle-monitor.env` are required.
+
+Install the new `pricing.py` module alongside `ksle_monitor.py` (or pull the repository if it is already cloned in `/opt/ovh-ksle-monitor`):
+
+```bash
+cd /opt/ovh-ksle-monitor
+sudo git pull origin main
+python3 -m unittest discover -s tests -v
+```
+
 ## HTML email notifications
 
 Stock alerts are sent as multipart/alternative email: accessible plain text plus responsive HTML featuring a dark OVH-MONITOR header, per-configuration cards, preferred-storage badge, datacenter, availability, timestamp, and a clickable full-area button plus a visible fallback URL to the official OVHcloud product page. A single email can list multiple available configurations. All values originating in API responses are HTML-escaped. No images or external email template assets are required.
