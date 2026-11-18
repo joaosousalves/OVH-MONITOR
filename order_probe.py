@@ -185,6 +185,37 @@ def catalog_selection(catalog: Any, storage_option: str, datacenter: str) -> tup
     return {"dedicated_datacenter": datacenter, "region": region, "dedicated_os": "none_64.en"}, chosen_addons
 
 
+def matching_offer_schema(row: dict) -> str:
+    """Restricted shape-only diagnostic; no raw values, identities or credentials."""
+    # API response formats can vary. Show field names and container shapes only,
+    # restricted to a single matching plan and at most two nesting levels.
+    def keys(value: dict) -> str:
+        safe = sorted(k for k in value if isinstance(k, str)
+                      and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", k))
+        shown = ", ".join(safe[:30])
+        return shown + (", ..." if len(safe) > 30 else "")
+
+    details = []
+    for name, value in list(row.items())[:30]:
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", name):
+            continue
+        if isinstance(value, dict):
+            details.append(f"{name}=object({keys(value)})")
+            for subname, subvalue in list(value.items())[:12]:
+                if (isinstance(subname, str)
+                        and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,39}", subname)
+                        and isinstance(subvalue, list) and subvalue
+                        and isinstance(subvalue[0], dict)):
+                    details.append(f"{name}.{subname}[0]=object({keys(subvalue[0])})")
+        elif isinstance(value, list):
+            first = value[0] if value else None
+            if isinstance(first, dict):
+                details.append(f"{name}=list({len(value)}), first=object({keys(first)})")
+            else:
+                details.append(f"{name}=list({len(value)})")
+    return "top-level=[" + keys(row) + "]; nested=[" + "; ".join(details[:20]) + "]"
+
+
 def offer_diagnostic(offers: Any) -> str:
     """Log only plan and billing fields, never the raw account/cart response."""
     if not isinstance(offers, list):
@@ -206,6 +237,7 @@ def offer_diagnostic(offers: Any) -> str:
         f"GET /order/cart/{{cartId}}/eco: {len(offers)} offers returned, "
         f"{len(matching)} match planCode={PLAN_CODE}. "
         f"Offer samples: {', '.join(shown) if shown else 'none'}"
+        + (f". Matching offer fields: {matching_offer_schema(matching[0])}" if matching else "")
     )
 
 
