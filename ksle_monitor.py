@@ -321,10 +321,16 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--check", action="store_true", help="Check stock without sending email or changing history")
     group.add_argument("--list", action="store_true", help="Print all API-reported locations and configurations")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
+    group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
+    parser.add_argument("--datacenter", default="bhs", help="Datacenter for --test-order (default: bhs)")
+    parser.add_argument("--storage", default="preferred", help="Storage addon code for --test-order (default: preferred)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        if args.test_order:
+            from order_probe import run_test_order
+            return run_test_order(args.datacenter, args.storage)
         if args.send_test_email:
             send_mail(mail_config(), "[OVH STOCK] Test email", "KS-LE-6 monitor SMTP delivery is working.\n")
             LOGGER.info("Test email accepted by SMTP server")
