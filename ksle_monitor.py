@@ -355,7 +355,7 @@ def send_mail(config: MailConfig, subject: str, body: str, html_body: str | None
         raise MonitorError(f"Email delivery failed: {exc}") from exc
 
 
-def alert_content(stocks: list[Stock]) -> tuple[str, str]:
+def alert_content(stocks: list[Stock], prices: dict[str, str] | None = None) -> tuple[str, str]:
     preferred_count = sum(stock.preferred for stock in stocks)
     marker = " - preferred disks!" if preferred_count else ""
     subject = f"[OVH STOCK] KS-LE-6: {len(stocks)} new availability event(s){marker}"
@@ -368,6 +368,7 @@ def alert_content(stocks: list[Stock]) -> tuple[str, str]:
             f"{'[PREFERRED] ' if stock.preferred else ''}{stock.storage_label}",
             f"  Datacenter: {stock.datacenter.upper()}",
             f"  API availability: {stock.status}",
+            f"  Preço: {(prices or {}).get(stock.storage, 'Preço de catálogo indisponível; confirmar no checkout')}",
             "",
         ])
     lines.extend([
@@ -381,7 +382,7 @@ def alert_content(stocks: list[Stock]) -> tuple[str, str]:
 
 
 
-def alert_html(stocks: list[Stock], *, test: bool = False) -> str:
+def alert_html(stocks: list[Stock], *, test: bool = False, prices: dict[str, str] | None = None) -> str:
     """Mobile-friendly table-based HTML email, escaped for untrusted API values."""
     from html import escape
 
@@ -392,6 +393,7 @@ def alert_html(stocks: list[Stock], *, test: bool = False) -> str:
         dc = escape(stock.datacenter.upper())
         status = escape(stock.status)
         preferred = stock.preferred
+        price = escape((prices or {}).get(stock.storage, "Preço indisponível — confirmar no checkout"))
         accent = "#16a34a" if preferred else "#64748b"
         badge = (
             '<span style="color:#166534;background:#dcfce7;padding:5px 9px;'
@@ -407,6 +409,7 @@ def alert_html(stocks: list[Stock], *, test: bool = False) -> str:
             f'<div style="font-size:16px;font-weight:700;color:#0f172a;">{title}</div>'
             f'<div style="font-size:13px;color:#475569;margin-top:8px;">Datacenter: '
             f'<strong>{dc}</strong> &nbsp;·&nbsp; Estado: <strong>{status}</strong></div>'
+            f'<div style="font-size:13px;color:#334155;margin-top:8px;">Preço: {price}</div>'
             '</td></tr></table></td></tr>'
         )
     timestamp = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
@@ -461,7 +464,7 @@ def alert_html(stocks: list[Stock], *, test: bool = False) -> str:
     )
 
 
-def run_once(stocks: list[Stock], path: Path, config: MailConfig | None, dry_run: bool) -> int:
+def run_once(stocks: list[Stock], path: Path, config: MailConfig | None, dry_run: bool, prices: dict[str, str] | None = None) -> int:
     previous = load_alerted(path)
     new, retained = transition(stocks, previous)
     currently_available = sum(stock.available for stock in stocks)
@@ -477,11 +480,11 @@ def run_once(stocks: list[Stock], path: Path, config: MailConfig | None, dry_run
         raise MonitorError("SMTP settings required for a real monitoring run")
 
     if new:
-        subject, body = alert_content(new)
+        subject, body = alert_content(new, prices=prices)
         # Do not mark an alert as sent until SMTP accepts the message.
         # We also write the observed out-of-stock resets on SMTP failures.
         try:
-            send_mail(config, subject, body, html_body=alert_html(new))
+            send_mail(config, subject, body, html_body=alert_html(new, prices=prices))
         except MonitorError:
             if retained != previous:
                 save_alerted(path, retained)
@@ -550,7 +553,15 @@ def main(argv: list[str] | None = None) -> int:
             print_stock(stocks)
             return 0
         config = None if args.check else mail_config()
-        return run_once(stocks, state_path(), config, dry_run=args.check)
+        # Only consult cached catalog pricing when a new stock alert is pending.
+        # A failed price lookup must never suppress or delay the stock email.
+        prices = None
+        if not args.check and config is not None:
+            pending, _ = transition(stocks, load_alerted(state_path()))
+            if pending:
+                from pricing import cached_prices
+                prices = cached_prices(state_path().with_name("pricing-cache.json"))
+        return run_once(stocks, state_path(), config, dry_run=args.check, prices=prices)
     except (MonitorError, ValueError) as exc:
         LOGGER.error("%s", exc)
         return 1
