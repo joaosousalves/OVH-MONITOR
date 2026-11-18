@@ -22,6 +22,7 @@ from urllib.request import Request, urlopen
 BASE_URL = "https://api.eu.ovhcloud.com/v1"
 TIME_URL = "https://api.eu.ovhcloud.com/1.0/auth/time"
 PLAN_CODE = "27skle06-v1"
+TEST_PLANS = {"ks-le-6": PLAN_CODE, "ks-le-1": "27skle01-v1"}
 PREFERRED_STORAGE_OPTION = "hybridsoftraid-2x4000sa-2x500nvme-27skle06-v1"
 DATACENTERS = {"bhs", "fra", "gra", "lon", "rbx", "sbg", "waw"}
 LOGGER = logging.getLogger("ksle-order-probe")
@@ -144,15 +145,16 @@ class OVHCartClient:
             raise OrderProbeError(f"Non-JSON API response for {method} {path}") from exc
 
 
-def catalog_selection(catalog: Any, storage_option: str, datacenter: str) -> tuple[dict, list[str]]:
+def catalog_selection(catalog: Any, storage_option: str, datacenter: str,
+                      plan_code: str = PLAN_CODE) -> tuple[dict, list[str]]:
     if not isinstance(catalog, dict):
         raise OrderProbeError("Public Eco catalog has an unexpected format")
     plans = catalog.get("plans")
     if not isinstance(plans, list):
         raise OrderProbeError("Eco catalog is missing plans")
-    plan = next((p for p in plans if isinstance(p, dict) and p.get("planCode") == PLAN_CODE), None)
+    plan = next((p for p in plans if isinstance(p, dict) and p.get("planCode") == plan_code), None)
     if plan is None:
-        raise OrderProbeError(f"Plan {PLAN_CODE} is not in OVHcloud's PT catalog")
+        raise OrderProbeError(f"Plan {plan_code} is not in OVHcloud's PT catalog")
     allowed_config = {c.get("name"): c.get("values") for c in plan.get("configurations", []) if isinstance(c, dict)}
     if datacenter not in allowed_config.get("dedicated_datacenter", []):
         raise OrderProbeError(f"Datacenter {datacenter} is not offered for this plan")
@@ -172,9 +174,10 @@ def catalog_selection(catalog: Any, storage_option: str, datacenter: str) -> tup
             raise OrderProbeError("Invalid mandatory addon family")
         if family.get("name") == "storage":
             seen_storage = True
-            if storage_option not in addons:
-                raise OrderProbeError(f"Storage option {storage_option} is not available in the catalog")
-            chosen_addons.append(storage_option)
+            selected_storage = family.get("default") if storage_option == "default" else storage_option
+            if selected_storage not in addons:
+                raise OrderProbeError(f"Storage option {selected_storage} is not available for {plan_code}")
+            chosen_addons.append(selected_storage)
         else:
             default = family.get("default")
             if default not in addons:
@@ -216,12 +219,12 @@ def matching_offer_schema(row: dict) -> str:
     return "top-level=[" + keys(row) + "]; nested=[" + "; ".join(details[:20]) + "]"
 
 
-def offer_diagnostic(offers: Any) -> str:
+def offer_diagnostic(offers: Any, plan_code: str = PLAN_CODE) -> str:
     """Log only plan and billing fields, never the raw account/cart response."""
     if not isinstance(offers, list):
         return f"Unexpected Eco response type: {type(offers).__name__}"
     rows = [r for r in offers if isinstance(r, dict)]
-    matching = [r for r in rows if r.get("planCode") == PLAN_CODE]
+    matching = [r for r in rows if r.get("planCode") == plan_code]
     sample = matching if matching else rows
     def safe_value(value: Any) -> str:
         # The response is untrusted; prevent huge/structured values in logs.
@@ -235,23 +238,36 @@ def offer_diagnostic(offers: Any) -> str:
     ]
     return (
         f"GET /order/cart/{{cartId}}/eco: {len(offers)} offers returned, "
-        f"{len(matching)} match planCode={PLAN_CODE}. "
+        f"{len(matching)} match planCode={plan_code}. "
         f"Offer samples: {', '.join(shown) if shown else 'none'}"
         + (f". Matching offer fields: {matching_offer_schema(matching[0])}" if matching else "")
     )
 
 
-def find_monthly_offer(offers: Any) -> dict:
+def find_monthly_offer(offers: Any, plan_code: str = PLAN_CODE) -> dict:
+    """Select only the one-month default offer from nested Eco prices entries."""
     if not isinstance(offers, list):
-        raise OrderProbeError(offer_diagnostic(offers))
+        raise OrderProbeError(offer_diagnostic(offers, plan_code))
+    matches = []
     for offer in offers:
-        if (isinstance(offer, dict) and offer.get("planCode") == PLAN_CODE
-                and offer.get("duration") == "P1M" and offer.get("pricingMode") == "default"):
-            return offer
+        if not isinstance(offer, dict) or offer.get("planCode") != plan_code:
+            continue
+        price_rows = offer.get("prices")
+        if not isinstance(price_rows, list):
+            price_rows = [offer]  # Legacy flat offer response
+        for price in price_rows:
+            if (isinstance(price, dict) and price.get("duration") == "P1M"
+                    and price.get("pricingMode") == "default"):
+                matches.append({"planCode": plan_code, "duration": "P1M",
+                                "pricingMode": "default"})
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise OrderProbeError(f"Ambiguous P1M/default offers for {plan_code}: {len(matches)}")
     raise OrderProbeError(
-        "No exactly matching monthly KS-LE-6 offer. "
-        + offer_diagnostic(offers)
-        + ". This may reflect unavailable stock or different offer terms."
+        f"No P1M/default offer found for {plan_code}. "
+        + offer_diagnostic(offers, plan_code)
+        + ". Stock may be unavailable, or contract terms may differ."
     )
 
 
@@ -269,7 +285,8 @@ def extract_quote(quote_data: Any) -> str:
 
 
 def test_order(client: OVHCartClient, datacenter: str = "bhs",
-               storage_option: str = PREFERRED_STORAGE_OPTION, subsidiary: str = "PT") -> str:
+               storage_option: str = PREFERRED_STORAGE_OPTION, subsidiary: str = "PT",
+               plan_code: str = PLAN_CODE) -> str:
     """Build and quote a temporary cart; NEVER submit checkout or payment."""
     datacenter = datacenter.lower()
     if datacenter not in DATACENTERS:
@@ -277,10 +294,14 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
     if subsidiary != "PT":
         raise OrderProbeError("This monitor's test-order flow is restricted to OVH Portugal (PT)")
 
+    if plan_code not in TEST_PLANS.values():
+        raise OrderProbeError("Unsupported cart-test product")
+    if plan_code != PLAN_CODE and storage_option == PREFERRED_STORAGE_OPTION:
+        raise OrderProbeError("Use --storage default for KS-LE-1")
     catalog = client.request("GET", "/order/catalog/public/eco", query={"ovhSubsidiary": subsidiary})
-    configurations, addons = catalog_selection(catalog, storage_option, datacenter)
+    configurations, addons = catalog_selection(catalog, storage_option, datacenter, plan_code)
 
-    LOGGER.info("Starting temporary test cart for %s in %s (NO ORDER / NO PAYMENT)", PLAN_CODE, datacenter.upper())
+    LOGGER.info("Starting temporary test cart for %s in %s (NO ORDER / NO PAYMENT)", plan_code, datacenter.upper())
     cart_id: str | None = None
     try:
         cart_response = client.request("POST", "/order/cart", {"ovhSubsidiary": subsidiary})
@@ -290,7 +311,7 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
         cart_path = "/order/cart/" + quote(cart_id, safe="")
         client.request("POST", cart_path + "/assign", {})
         offers = client.request("GET", cart_path + "/eco")
-        offer = find_monthly_offer(offers)
+        offer = find_monthly_offer(offers, plan_code)
         order_item = client.request("POST", cart_path + "/eco", {
             "planCode": offer["planCode"],
             "duration": offer["duration"],
@@ -316,7 +337,7 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             })
         quote_data = client.request("GET", cart_path + "/checkout")
         price = extract_quote(quote_data)
-        return f"Carrinho de teste validado: {PLAN_CODE}, {datacenter.upper()}, {storage_option}; total com IVA: {price}. Nenhuma encomenda criada."
+        return f"Carrinho de teste validado: {plan_code}, {datacenter.upper()}, addons={addons}; total com IVA: {price}. Nenhuma encomenda criada."
     finally:
         if cart_id is not None:
             try:
@@ -326,17 +347,21 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                 LOGGER.warning("Unable to delete temporary test cart: %s", exc)
 
 
-def run_test_order(datacenter: str, storage: str) -> int:
+def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6") -> int:
     token = os.getenv("OVH_TOKEN", "").strip()
     ak = os.getenv("OVH_APPLICATION_KEY", "").strip()
     secret = os.getenv("OVH_APPLICATION_SECRET", "").strip()
     ck = os.getenv("OVH_CONSUMER_KEY", "").strip()
+    if test_plan not in TEST_PLANS:
+        LOGGER.error("Unsupported test product: %s", test_plan)
+        return 1
     storage_code = PREFERRED_STORAGE_OPTION if storage == "preferred" else storage
     try:
         client = OVHCartClient(
             token, application_key=ak, application_secret=secret, consumer_key=ck
         )
-        result = test_order(client, datacenter=datacenter, storage_option=storage_code)
+        result = test_order(client, datacenter=datacenter, storage_option=storage_code,
+                            plan_code=TEST_PLANS[test_plan])
         print(result)
         return 0
     except OrderProbeError as exc:
