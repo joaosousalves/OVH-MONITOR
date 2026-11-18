@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import tempfile
+from urllib.error import HTTPError
+from io import BytesIO
 import unittest
 from unittest.mock import patch
 
@@ -144,6 +146,50 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(message.get_content_type(), "multipart/alternative")
             self.assertEqual(message.get_body(preferencelist=("plain",)).get_content().strip(), "Plain fallback")
             self.assertIn("<b>HTML</b>", message.get_body(preferencelist=("html",)).get_content())
+
+    def test_backoff_exponential_and_persistent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "api-backoff.json"
+            err = monitor.APITransientError("HTTP 429")
+            self.assertEqual(monitor.apply_api_failure(path, err, now=1000), 60)
+            self.assertTrue(monitor.api_cooldown_active(path, now=1001))
+            self.assertEqual(monitor.read_cooldown(path), (1060.0, 1))
+            self.assertEqual(monitor.apply_api_failure(path, err, now=1061), 120)
+            self.assertEqual(monitor.read_cooldown(path), (1181.0, 2))
+            self.assertFalse(monitor.api_cooldown_active(path, now=1182))
+
+    def test_retry_after_header_is_respected(self):
+        self.assertEqual(monitor.retry_after_seconds("3600"), 3600)
+        self.assertEqual(monitor.retry_after_seconds("invalid"), None)
+        self.assertEqual(monitor.retry_after_seconds("Wed, 18 Nov 2026 23:00:00 GMT",
+                            now=1795041000), 3000)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "api-backoff.json"
+            self.assertEqual(monitor.apply_api_failure(
+                path, monitor.APITransientError("429", retry_after=900), now=10), 900)
+
+    def test_http_429_is_transient(self):
+        from unittest.mock import MagicMock
+        err = HTTPError("https://example.com", 429, "Too Many", {"Retry-After": "360"}, BytesIO(b""))
+        with patch.object(monitor, "urlopen", side_effect=err):
+            with self.assertRaises(monitor.APITransientError) as caught:
+                monitor.retrieve_stock()
+            self.assertEqual(caught.exception.retry_after, 360)
+
+    def test_http_403_does_not_cause_backoff(self):
+        err = HTTPError("https://example.com", 403, "Forbidden", {}, BytesIO(b""))
+        with patch.object(monitor, "urlopen", side_effect=err):
+            with self.assertRaises(monitor.MonitorError) as caught:
+                monitor.retrieve_stock()
+            self.assertNotIsInstance(caught.exception, monitor.APITransientError)
+
+    def test_success_clears_cooldown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "api-backoff.json"
+            monitor.write_cooldown(path, 0, 3)
+            self.assertEqual(monitor.read_cooldown(path), (0.0, 3))
+            monitor.write_cooldown(path, 0, 0)
+            self.assertEqual(monitor.read_cooldown(path), (0.0, 0))
 
     def test_partially_refused_smtp_recipients_is_failure(self):
         config = monitor.MailConfig("smtp", 587, "starttls", "", "", "sender@example.com", ("a@example.com",))
