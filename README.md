@@ -296,3 +296,5 @@ No purchase endpoint is present anywhere in the test-order API client.
 - Application code and configuration contain no SMTP credentials. Keep the populated environment file private and out of version control.
 - Neither API availability nor email delivery implies an item is held for you.
 - No auto-buy or OVH account login is performed.
+
+The Eco no-offer diagnostic includes only matching-plan field names and nested structure; it never logs full response values.
