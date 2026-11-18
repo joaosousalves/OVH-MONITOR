@@ -1,0 +1,22 @@
+[Unit]
+Description=Check OVHcloud KS-LE-6 stock and email new availability
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+EnvironmentFile=/etc/ovh-ksle-monitor.env
+ExecStart=/usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py --once
+StateDirectory=ovh-ksle-monitor
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0077
