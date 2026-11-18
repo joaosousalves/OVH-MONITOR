@@ -1,4 +1,7 @@
-# OPTIONAL: use only for the manual --test-order command, never the timer.
-# Obtain a scoped Bearer API token from the official OVHcloud EU API console.
-# Do not commit your real token to GitHub or paste it into chat.
-OVH_TOKEN=replace-with-your-scoped-ovhcloud-api-token
+# MANUAL cart quotation only. Not loaded by the stock-monitor service or timer.
+# These AK/AS/CK credentials must have the restricted temporary-cart permissions.
+# NEVER commit this populated file to GitHub or paste its values into chat.
+OVH_APPLICATION_KEY=REPLACE_WITH_APPLICATION_KEY
+OVH_APPLICATION_SECRET=REPLACE_WITH_APPLICATION_SECRET
+OVH_CONSUMER_KEY=REPLACE_WITH_CONSUMER_KEY
+# Leave OVH_TOKEN unset when using the three keys.
