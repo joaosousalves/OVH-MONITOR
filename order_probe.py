@@ -185,14 +185,42 @@ def catalog_selection(catalog: Any, storage_option: str, datacenter: str) -> tup
     return {"dedicated_datacenter": datacenter, "region": region, "dedicated_os": "none_64.en"}, chosen_addons
 
 
+def offer_diagnostic(offers: Any) -> str:
+    """Log only plan and billing fields, never the raw account/cart response."""
+    if not isinstance(offers, list):
+        return f"Unexpected Eco response type: {type(offers).__name__}"
+    rows = [r for r in offers if isinstance(r, dict)]
+    matching = [r for r in rows if r.get("planCode") == PLAN_CODE]
+    sample = matching if matching else rows
+    def safe_value(value: Any) -> str:
+        # The response is untrusted; prevent huge/structured values in logs.
+        return str(value)[:70] if isinstance(value, (str, int, float, bool)) else "missing"
+    shown = [
+        "(" + ", ".join(
+            f"{key}={safe_value(row.get(key))}"
+            for key in ("planCode", "duration", "pricingMode")
+        ) + ")"
+        for row in sample[:8]
+    ]
+    return (
+        f"GET /order/cart/{{cartId}}/eco: {len(offers)} offers returned, "
+        f"{len(matching)} match planCode={PLAN_CODE}. "
+        f"Offer samples: {', '.join(shown) if shown else 'none'}"
+    )
+
+
 def find_monthly_offer(offers: Any) -> dict:
     if not isinstance(offers, list):
-        raise OrderProbeError("Eco order offers are not a list")
+        raise OrderProbeError(offer_diagnostic(offers))
     for offer in offers:
         if (isinstance(offer, dict) and offer.get("planCode") == PLAN_CODE
                 and offer.get("duration") == "P1M" and offer.get("pricingMode") == "default"):
             return offer
-    raise OrderProbeError(f"No orderable monthly offer found for {PLAN_CODE} in your OVHcloud account")
+    raise OrderProbeError(
+        "No exactly matching monthly KS-LE-6 offer. "
+        + offer_diagnostic(offers)
+        + ". This may reflect unavailable stock or different offer terms."
+    )
 
 
 def extract_quote(quote_data: Any) -> str:
