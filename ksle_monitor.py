@@ -518,6 +518,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--storage", default="preferred", help="Storage addon code for --test-order (default: preferred)")
     parser.add_argument("--test-plan", choices=("ks-le-6", "ks-le-1"), default="ks-le-6",
                         help="Product for manual --test-order only; stock timer remains KS-LE-6")
+    parser.add_argument("--test-fqn", default=None,
+                        help="Exact stock FQN for manual cart test; selects its RAM and storage")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -530,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.test_order:
             from order_probe import run_test_order
-            return run_test_order(args.datacenter, args.storage, args.test_plan)
+            return run_test_order(args.datacenter, args.storage, args.test_plan, args.test_fqn)
         if args.diagnose_prices:
             from pricing import fetch_catalog, diagnostic_summary
             print(json.dumps(diagnostic_summary(fetch_catalog()), indent=2))
