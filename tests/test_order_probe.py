@@ -247,6 +247,15 @@ class OrderProbeTests(unittest.TestCase):
         self.assertFalse(any(method == "POST" and path.endswith("/checkout")
                              for method, path, _, _ in fake.calls))
 
+    def test_exact_fqn_rejects_conflicting_storage_override(self):
+        plan = probe.TEST_PLANS["ks-le-1"]
+        fqn = plan + ".ram-32g-ddr3-noecc-1333.softraid-3x2000sa"
+        fake = FakeClient()
+        with self.assertRaisesRegex(probe.OrderProbeError, "different --storage"):
+            probe.test_order(fake, datacenter="bhs", plan_code=plan,
+                             target_fqn=fqn, storage_option="softraid-2x480ssd-" + plan)
+        self.assertFalse(fake.calls)  # No catalog call or cart mutation.
+
     def test_invalid_fqn_rejected_before_cart_creation(self):
         fake = FakeClient()
         with self.assertRaises(probe.OrderProbeError):
