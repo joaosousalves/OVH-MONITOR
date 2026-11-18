@@ -1,0 +1,12 @@
+[Unit]
+Description=Check KS-LE-6 availability every 3 minutes
+
+[Timer]
+OnCalendar=*:0/3
+Persistent=true
+AccuracySec=15s
+RandomizedDelaySec=10s
+Unit=ovh-ksle-monitor.service
+
+[Install]
+WantedBy=timers.target
