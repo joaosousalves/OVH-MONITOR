@@ -231,12 +231,14 @@ def mail_config() -> MailConfig:
     return MailConfig(host, port, security, username, password, sender, recipients, timeout)
 
 
-def send_mail(config: MailConfig, subject: str, body: str) -> None:
+def send_mail(config: MailConfig, subject: str, body: str, html_body: str | None = None) -> None:
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = config.sender
     message["To"] = ", ".join(config.recipients)
     message.set_content(body)
+    if html_body is not None:
+        message.add_alternative(html_body, subtype="html")
     context = ssl.create_default_context()
     try:
         if config.security == "ssl":
@@ -283,6 +285,81 @@ def alert_content(stocks: list[Stock]) -> tuple[str, str]:
     return subject, "\n".join(lines)
 
 
+
+def alert_html(stocks: list[Stock], *, test: bool = False) -> str:
+    """Mobile-friendly table-based HTML email, escaped for untrusted API values."""
+    from html import escape
+
+    sorted_stocks = sorted(stocks, key=stock_sort_key)
+    cards = []
+    for stock in sorted_stocks:
+        title = escape(stock.storage_label)
+        dc = escape(stock.datacenter.upper())
+        status = escape(stock.status)
+        preferred = stock.preferred
+        accent = "#16a34a" if preferred else "#64748b"
+        badge = (
+            '<span style="color:#166534;background:#dcfce7;padding:5px 9px;'
+            'border-radius:12px;font-size:12px;font-weight:700;">DISCOS PREFERIDOS</span>'
+            if preferred else ""
+        )
+        cards.append(
+            '<tr><td style="padding:0 0 12px;">'
+            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            f'style="border:1px solid #e2e8f0;border-left:4px solid {accent};'
+            'border-radius:10px;background:#ffffff;"><tr><td style="padding:18px;">'
+            f'<div style="margin-bottom:9px;">{badge}</div>'
+            f'<div style="font-size:16px;font-weight:700;color:#0f172a;">{title}</div>'
+            f'<div style="font-size:13px;color:#475569;margin-top:8px;">Datacenter: '
+            f'<strong>{dc}</strong> &nbsp;·&nbsp; Estado: <strong>{status}</strong></div>'
+            '</td></tr></table></td></tr>'
+        )
+    timestamp = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    test_banner = (
+        '<tr><td style="padding:12px 24px;background:#fef3c7;color:#92400e;'
+        'font-weight:700;">EMAIL DE TESTE — disponibilidade simulada</td></tr>'
+        if test else ""
+    )
+    return (
+        '<!doctype html><html lang="pt"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+        '<body style="margin:0;padding:24px 12px;background:#f1f5f9;'
+        'font-family:Arial,Helvetica,sans-serif;color:#0f172a;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        '<tr><td align="center"><table role="presentation" width="100%" '
+        'cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;'
+        'border-radius:14px;overflow:hidden;">'
+        '<tr><td style="padding:28px 24px;background:#0f172a;color:#ffffff;">'
+        '<div style="font-size:13px;letter-spacing:2px;color:#93c5fd;">OVH-MONITOR</div>'
+        '<h1 style="margin:12px 0 4px;font-size:24px;line-height:1.25;">'
+        'KS-LE-6 disponível</h1>'
+        '<div style="font-size:14px;color:#cbd5e1;">Alerta de disponibilidade OVHcloud</div>'
+        '</td></tr>'
+        + test_banner
+        + '<tr><td style="padding:24px;">'
+        '<p style="font-size:14px;line-height:1.6;margin:0 0 18px;">'
+        'A OVHcloud comunicou disponibilidade nas seguintes configurações:</p>'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        + "".join(cards)
+        + '</table>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        'style="margin:12px 0 22px;"><tr><td bgcolor="#2563eb" '
+        'style="border-radius:8px;padding:14px 20px;">'
+        f'<a href="{escape(PRODUCT_URL, quote=True)}" '
+        'style="color:#ffffff;text-decoration:none;font-weight:700;'
+        'font-size:14px;">Ver servidor na OVHcloud</a>'
+        '</td></tr></table>'
+        f'<p style="font-size:12px;line-height:1.6;color:#64748b;">'
+        f'Verificado em {timestamp}. O stock pode mudar antes de concluir '
+        'a encomenda. Este email não reserva nem compra servidores.</p>'
+        '</td></tr>'
+        '<tr><td style="padding:16px 24px;background:#f8fafc;'
+        'font-size:12px;color:#64748b;">'
+        'Mensagem automática do OVH-MONITOR · Não responder</td></tr>'
+        '</table></td></tr></table></body></html>'
+    )
+
+
 def run_once(stocks: list[Stock], path: Path, config: MailConfig | None, dry_run: bool) -> int:
     previous = load_alerted(path)
     new, retained = transition(stocks, previous)
@@ -303,7 +380,7 @@ def run_once(stocks: list[Stock], path: Path, config: MailConfig | None, dry_run
         # Do not mark an alert as sent until SMTP accepts the message.
         # We also write the observed out-of-stock resets on SMTP failures.
         try:
-            send_mail(config, subject, body)
+            send_mail(config, subject, body, html_body=alert_html(new))
         except MonitorError:
             if retained != previous:
                 save_alerted(path, retained)
@@ -339,7 +416,16 @@ def main(argv: list[str] | None = None) -> int:
             from order_probe import run_test_order
             return run_test_order(args.datacenter, args.storage)
         if args.send_test_email:
-            send_mail(mail_config(), "[OVH STOCK] Test email", "KS-LE-6 monitor SMTP delivery is working.\n")
+            sample = Stock(
+                fqn=f"{PLAN_CODE}.ram-128g-ddr4-ecc-2400.{PREFERRED_STORAGE}",
+                storage=PREFERRED_STORAGE, datacenter="bhs", status="1H-high",
+            )
+            _, plain = alert_content([sample])
+            send_mail(
+                mail_config(), "[OVH STOCK] Test email (simulated stock)",
+                "EMAIL DE TESTE - disponibilidade simulada.\n\n" + plain,
+                html_body=alert_html([sample], test=True),
+            )
             LOGGER.info("Test email accepted by SMTP server")
             return 0
 
