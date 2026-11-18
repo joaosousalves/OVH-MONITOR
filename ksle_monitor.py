@@ -111,8 +111,8 @@ class MailConfig:
     timeout: int = 15
 
 
-def retrieve_stock(timeout_seconds: int = 15) -> list[Stock]:
-    url = f"{API_URL}?{urlencode({'planCode': PLAN_CODE})}"
+def retrieve_stock(timeout_seconds: int = 15, plan_code: str = PLAN_CODE) -> list[Stock]:
+    url = f"{API_URL}?{urlencode({'planCode': plan_code})}"
     request = Request(url, headers={"Accept": "application/json", "User-Agent": "ksle-monitor/1.0"})
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
@@ -130,23 +130,23 @@ def retrieve_stock(timeout_seconds: int = 15) -> list[Stock]:
         raise APITransientError(f"Temporary OVHcloud connection error: {exc}") from exc
     except ValueError as exc:
         raise MonitorError(f"Invalid OVHcloud JSON response: {exc}") from exc
-    return parse_stock(payload)
+    return parse_stock(payload, plan_code=plan_code)
 
 
-def parse_stock(payload: Any) -> list[Stock]:
+def parse_stock(payload: Any, plan_code: str = PLAN_CODE) -> list[Stock]:
     if not isinstance(payload, list):
         raise MonitorError("OVHcloud API returned non-list JSON")
 
     stocks: dict[str, Stock] = {}
     plan_rows = 0
     for row in payload:
-        if not isinstance(row, dict) or row.get("planCode") != PLAN_CODE:
+        if not isinstance(row, dict) or row.get("planCode") != plan_code:
             continue
         plan_rows += 1
         fqn = row.get("fqn")
         storage = row.get("storage")
         datacenters = row.get("datacenters")
-        if not isinstance(fqn, str) or not fqn.startswith(f"{PLAN_CODE}."):
+        if not isinstance(fqn, str) or not fqn.startswith(f"{plan_code}."):
             raise MonitorError("Unexpected or missing plan FQN in OVHcloud API")
         if not isinstance(storage, str) or not storage:
             raise MonitorError("Missing storage code in OVHcloud API")
@@ -166,7 +166,7 @@ def parse_stock(payload: Any) -> list[Stock]:
 
     if not plan_rows or not stocks:
         # An empty/partial API response must not reset alert history.
-        raise MonitorError(f"No {PLAN_CODE} stock records in OVHcloud API response")
+        raise MonitorError(f"No {plan_code} stock records in OVHcloud API response")
     return sorted(stocks.values(), key=stock_sort_key)
 
 
@@ -508,6 +508,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--once", action="store_true", help="Check stock, email new availability, update history (default)")
     group.add_argument("--check", action="store_true", help="Check stock without sending email or changing history")
     group.add_argument("--list", action="store_true", help="Print all API-reported locations and configurations")
+    group.add_argument("--list-test-stock", action="store_true",
+                       help="Read-only stock check for --test-plan (KS-LE-1 or KS-LE-6)")
     group.add_argument("--list-prices", action="store_true", help="Show cached public monthly catalog estimates (no cart)")
     group.add_argument("--diagnose-prices", action="store_true", help="Inspect KS-LE-6 public catalog price structure without credentials")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
@@ -520,6 +522,12 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        if args.list_test_stock:
+            from order_probe import TEST_PLANS
+            plan_code = TEST_PLANS[args.test_plan]
+            for stock in retrieve_stock(plan_code=plan_code):
+                print(f"{stock.datacenter.upper():<6} {stock.status:<12} {stock.fqn}")
+            return 0
         if args.test_order:
             from order_probe import run_test_order
             return run_test_order(args.datacenter, args.storage, args.test_plan)
