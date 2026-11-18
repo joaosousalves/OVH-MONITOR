@@ -19,27 +19,45 @@ PLAN = "27skle06-v1"
 CATALOG = "https://api.eu.ovhcloud.com/v1/order/catalog/public/eco?ovhSubsidiary=PT"
 TTL_SECONDS = 6 * 3600
 RETRY_SECONDS = 3600  # Avoid hammering catalog on failure.
+CACHE_SCHEMA_VERSION = 2  # Invalidate pre-fix cache entries with zero parsed prices.
 LOG = logging.getLogger("ksle-monitor")
 
 
 def monthly_price(item: dict) -> Decimal | None:
-    """Choose a single ordinary monthly EUR price denominated in 1e-8 units."""
+    """Monthly recurring EUR price from the OVH Eco catalogue.
+
+    Current Eco JSON identifies recurring one-month prices by phase=1 and
+    interval=1 (unit 'month' when supplied). Phase=0/interval=0 is a
+    separate initial charge, NOT the recurring monthly price. Older catalog
+    formats may instead use duration=P1M/pricingMode=default.
+    Some addon catalogs repeat an identical monthly price in multiple rows.
+    """
     if not isinstance(item, dict):
         return None
-    matches = [
-        row for row in item.get("pricings", [])
-        if isinstance(row, dict)
-        and row.get("duration") == "P1M"
-        and row.get("pricingMode") == "default"
-        and row.get("phase", 0) in (0, None)
-        and isinstance(row.get("price"), int)
-        and not isinstance(row["price"], bool)
-        and row["price"] >= 0
-    ]
-    # Ambiguous prices must not silently pick the wrong one.
-    if len(matches) != 1:
+    matches = []
+    for row in item.get("pricings", []):
+        if not isinstance(row, dict):
+            continue
+        amount = row.get("price")
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+            continue
+        if "interval" in row or "phase" in row:
+            monthly = (
+                row.get("phase") == 1
+                and row.get("interval") == 1
+                and row.get("intervalUnit", "month") == "month"
+            )
+        else:
+            monthly = (
+                row.get("duration") == "P1M"
+                and row.get("pricingMode") == "default"
+            )
+        if monthly:
+            matches.append(amount)
+    # Duplicates with the same amount are harmless; conflicting prices are not.
+    if not matches or len(set(matches)) != 1:
         return None
-    return Decimal(matches[0]["price"]) / Decimal(100000000)
+    return Decimal(matches[0]) / Decimal(100000000)
 
 
 def extract_prices(data: dict) -> dict[str, str]:
@@ -134,18 +152,18 @@ def cached_prices(path: Path, now: float | None = None) -> dict[str, str]:
     checked = old.get("checked_at", 0)
     cached = old.get("prices", {})
     cached = cached if isinstance(cached, dict) else {}
-    if old and now - checked < (TTL_SECONDS if cached else RETRY_SECONDS):
+    if old.get("schema_version") == CACHE_SCHEMA_VERSION and now - checked < (TTL_SECONDS if cached else RETRY_SECONDS):
         return cached
     try:
         prices = extract_prices(fetch_catalog())
-        save_cache(path, {"checked_at": now, "prices": prices})
+        save_cache(path, {"schema_version": CACHE_SCHEMA_VERSION, "checked_at": now, "prices": prices})
         LOG.info("Catalog prices refreshed: %d verified storage layouts", len(prices))
         return prices
     except Exception as exc:
         LOG.warning("Price catalog unavailable; omitting unverified prices: %s", exc)
         # If old quotes are stale, DO NOT surface them as current.
         try:
-            save_cache(path, {"checked_at": now, "prices": {}})
+            save_cache(path, {"schema_version": CACHE_SCHEMA_VERSION, "checked_at": now, "prices": {}})
         except OSError:
             LOG.warning("Unable to save price-cache retry timestamp")
         return {}
