@@ -56,6 +56,13 @@ class PriceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pricing.extract_prices(data)
 
+    def test_diagnose_only_selected_plan(self):
+        diagnostic = pricing.diagnostic_summary(fixture())
+        self.assertEqual(diagnostic["currency"], "EUR")
+        self.assertTrue(diagnostic["plan_found"])
+        self.assertEqual(len(diagnostic["families"]), 3)
+        self.assertEqual(diagnostic["base_pricings"][0]["duration"], "P1M")
+
     def test_cache_fresh_and_stale(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "pricing-cache.json"
