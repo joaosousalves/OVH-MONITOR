@@ -63,6 +63,12 @@ sudo systemd-run --wait --pipe --collect \\
 
 Use `sudo journalctl -u ovh-ksle-monitor.service -n 40 --no-pager` for subsequent stock-check logs. Do not paste SMTP secrets into chat or check them into version control.
 
+## HTML email notifications
+
+Stock alerts are sent as multipart/alternative email: accessible plain text plus responsive HTML featuring a dark OVH-MONITOR header, per-configuration cards, preferred-storage badge, datacenter, availability, timestamp, and a link to the official OVHcloud product page. A single email can list multiple available configurations. All values originating in API responses are HTML-escaped. No images or external email template assets are required.
+
+`--send-test-email` sends a **sample HTML stock alert** with a prominent **TEST / simulated availability** banner, without checking stock or changing alert history. It does **not** place an order. Existing SMTP configuration in `/etc/ovh-ksle-monitor.env` is unchanged.
+
 ## Requirements
 
 - Ubuntu/Debian or another Linux with `systemd` and **Python 3.10 or later**.
