@@ -4,7 +4,7 @@
 SMTP_HOST=smtp.mail.ovh.net
 SMTP_PORT=587
 SMTP_SECURITY=starttls
-SMTP_USERNAME=donotreply@basketly.eu
+SMTP_USERNAME=info@basketly.eu
 SMTP_PASSWORD=REPLACE_WITH_YOUR_SMTP_PASSWORD
 SMTP_FROM="Basketly <donotreply@basketly.eu>"
 SMTP_TO=REPLACE_WITH_YOUR_ALERT_RECIPIENT_EMAIL
