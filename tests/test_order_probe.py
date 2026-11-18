@@ -92,6 +92,36 @@ class OrderProbeTests(unittest.TestCase):
             probe.test_order(fake)
         self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
 
+    def test_missing_monthly_offer_diagnoses_without_exposing_response(self):
+        sample = [
+            {"planCode": probe.PLAN_CODE, "duration": "P12M",
+             "pricingMode": "default", "cartId": "secret-cart-id"},
+            {"planCode": "different-plan", "duration": "P1M", "pricingMode": "default"},
+        ]
+        with self.assertRaises(probe.OrderProbeError) as caught:
+            probe.find_monthly_offer(sample)
+        message = str(caught.exception)
+        self.assertIn("2 offers returned", message)
+        self.assertIn("1 match", message)
+        self.assertIn("duration=P12M", message)
+        self.assertNotIn("secret-cart-id", message)
+
+    def test_empty_eco_offer_list_diagnosis(self):
+        with self.assertRaises(probe.OrderProbeError) as caught:
+            probe.find_monthly_offer([])
+        self.assertIn("0 offers returned", str(caught.exception))
+        self.assertIn("Offer samples: none", str(caught.exception))
+
+    def test_does_not_pick_other_plan_or_contract(self):
+        with self.assertRaises(probe.OrderProbeError):
+            probe.find_monthly_offer([{
+                "planCode": probe.PLAN_CODE, "duration": "P12M", "pricingMode": "default"
+            }])
+        with self.assertRaises(probe.OrderProbeError):
+            probe.find_monthly_offer([{
+                "planCode": "other-plan", "duration": "P1M", "pricingMode": "default"
+            }])
+
     def test_no_monthly_offer_cleans_up_cart(self):
         fake = FakeClient(offers=[])
         with self.assertRaises(probe.OrderProbeError):
