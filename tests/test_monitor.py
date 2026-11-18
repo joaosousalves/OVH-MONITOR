@@ -191,6 +191,16 @@ class MonitorTests(unittest.TestCase):
             monitor.write_cooldown(path, 0, 0)
             self.assertEqual(monitor.read_cooldown(path), (0.0, 0))
 
+    def test_alert_includes_catalog_price_and_fallback(self):
+        stocks = monitor.parse_stock(response("1H-low", "72H"))
+        prices = {monitor.PREFERRED_STORAGE: "42.00 EUR/mês sem IVA (estimativa de catálogo)"}
+        _, plain = monitor.alert_content(stocks, prices=prices)
+        html = monitor.alert_html(stocks, prices=prices)
+        self.assertIn("42.00 EUR/mês sem IVA", plain)
+        self.assertIn("42.00 EUR/mês sem IVA", html)
+        self.assertIn("Preço indisponível", html)
+        self.assertIn("Preço de catálogo indisponível", plain)
+
     def test_partially_refused_smtp_recipients_is_failure(self):
         config = monitor.MailConfig("smtp", 587, "starttls", "", "", "sender@example.com", ("a@example.com",))
         with patch.object(monitor.smtplib, "SMTP") as smtp:
