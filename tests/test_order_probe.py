@@ -211,6 +211,82 @@ class OrderProbeTests(unittest.TestCase):
         self.assertFalse(any(method == "POST" and path.endswith("/checkout")
                              for method, path, _, _ in fake.calls))
 
+    def test_exact_fqn_selects_available_ram_and_disks(self):
+        plan = probe.TEST_PLANS["ks-le-1"]
+        fqn = plan + ".ram-32g-ddr3-noecc-1333.softraid-3x2000sa"
+        disk_ssd = "softraid-2x480ssd-" + plan
+        disk_hdd = "softraid-3x2000sa-" + plan
+        ram_16 = "ram-16g-ddr3-noecc-1333-" + plan
+        ram_32 = "ram-32g-ddr3-noecc-1333-" + plan
+        catalog_plan = {
+            "planCode": plan,
+            "configurations": CATALOG["plans"][0]["configurations"],
+            "addonFamilies": [
+                {"name": "memory", "mandatory": True,
+                 "addons": [ram_16, ram_32], "default": ram_16},
+                {"name": "storage", "mandatory": True,
+                 "addons": [disk_ssd, disk_hdd], "default": disk_ssd},
+            ],
+        }
+        fake = FakeClient(offers=[{
+            "planCode": plan, "prices": [
+                {"duration": "P1M", "pricingMode": "default"},
+                {"duration": "P12M", "pricingMode": "default"},
+            ],
+        }])
+        with patch.dict(CATALOG, {"plans": CATALOG["plans"] + [catalog_plan]}):
+            output = probe.test_order(fake, datacenter="bhs",
+                                      plan_code=plan, target_fqn=fqn)
+        self.assertIn("total com IVA", output)
+        chosen = [body["planCode"] for method, path, body, _ in fake.calls
+                  if method == "POST" and path.endswith("/eco/options")]
+        self.assertEqual(chosen, [ram_32, disk_hdd])
+        self.assertNotIn(ram_16, chosen)
+        self.assertNotIn(disk_ssd, chosen)
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in fake.calls))
+
+    def test_invalid_fqn_rejected_before_cart_creation(self):
+        fake = FakeClient()
+        with self.assertRaises(probe.OrderProbeError):
+            probe.test_order(fake, plan_code=probe.TEST_PLANS["ks-le-1"],
+                             target_fqn="27skle01-v1.ram-32g-ddr3-noecc-1333")
+        self.assertFalse(fake.calls)
+
+    def test_missing_matching_hardware_addon_rejected_before_cart(self):
+        plan = probe.TEST_PLANS["ks-le-1"]
+        fqn = plan + ".ram-32g-ddr3-noecc-1333.softraid-3x2000sa"
+        fake = FakeClient()
+        with self.assertRaises(probe.OrderProbeError):
+            probe.test_order(fake, plan_code=plan, target_fqn=fqn)
+        self.assertFalse(any(method == "POST" and path == "/order/cart"
+                             for method, path, _, _ in fake.calls))
+
+    def test_stock_preflight_rejects_unavailable_without_cart(self):
+        import ksle_monitor as monitor
+        plan = probe.TEST_PLANS["ks-le-1"]
+        fqn = plan + ".ram-32g-ddr3-noecc-1333.softraid-3x2000sa"
+        items = [monitor.Stock(fqn, "softraid-3x2000sa", "bhs", "unavailable")]
+        with patch.object(monitor, "retrieve_stock", return_value=items) as retrieve:
+            with self.assertRaises(probe.OrderProbeError) as caught:
+                probe.verify_available_test_fqn(plan, fqn, "bhs")
+        retrieve.assert_called_once_with(plan_code=plan)
+        self.assertIn("no cart created", str(caught.exception))
+
+    def test_stock_preflight_accepts_exact_available_fqn(self):
+        import ksle_monitor as monitor
+        plan = probe.TEST_PLANS["ks-le-1"]
+        fqn = plan + ".ram-32g-ddr3-noecc-1333.softraid-3x2000sa"
+        items = [
+            monitor.Stock(fqn, "softraid-3x2000sa", "gra", "unavailable"),
+            monitor.Stock(fqn, "softraid-3x2000sa", "bhs", "1H-high"),
+        ]
+        with patch.object(monitor, "retrieve_stock", return_value=items):
+            self.assertIsNone(probe.verify_available_test_fqn(plan, fqn, "bhs"))
+            with self.assertRaises(probe.OrderProbeError):
+                probe.verify_available_test_fqn(plan, fqn, "gra")
+
     def test_ks_le_1_requires_explicit_default_storage(self):
         fake = FakeClient()
         with self.assertRaises(probe.OrderProbeError):
