@@ -1,0 +1,11 @@
+# Copy to /etc/ovh-ksle-monitor.env (root-owned, mode 0600).
+# OVHcloud availability API requires no API key.
+# Do not put real credentials in a repository.
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USERNAME=alerts@example.com
+SMTP_PASSWORD=replace-with-an-app-password
+SMTP_FROM=alerts@example.com
+SMTP_TO=your-email@example.com
+HTTP_TIMEOUT=15
