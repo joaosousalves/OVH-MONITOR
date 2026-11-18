@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""Monitor the public OVHcloud dedicated-server stock API; alert by SMTP.
+
+Runs once per invocation. A systemd timer handles scheduling. No third-party
+Python dependencies or OVHcloud API credentials are needed.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.message import EmailMessage
+import json
+import logging
+import os
+from pathlib import Path
+import re
+import smtplib
+import ssl
+import sys
+import tempfile
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+
+PLAN_CODE = "27skle06-v1"
+PREFERRED_STORAGE = "hybridsoftraid-2x4000sa-2x500nvme"
+PRODUCT_URL = "https://eco.ovhcloud.com/pt/kimsufi/ks-le-6/"
+API_URL = "https://api.eu.ovhcloud.com/v1/dedicated/server/datacenter/availabilities"
+STORAGE_NAMES = {
+    PREFERRED_STORAGE: "PREFERRED: 2 x 512 GB NVMe + 2 x 4 TB HDD",
+    "softraid-2x1920nvme": "2 x 1.92 TB NVMe",
+    "softraid-3x1000nvme": "3 x 1 TB NVMe",
+    "softraid-4x960ssd": "4 x 960 GB SATA SSD",
+}
+
+# Official feed currently returns 1H-high, 1H-low, 72H, etc. Any H status
+# indicates a provisioning lead time, not an inventory count. Other statuses
+# like unavailable, unknown and comingSoon must NOT trigger an email.
+AVAILABLE_STATUS = re.compile(r"^(?:\d+H(?:-(?:high|low))?|available|limited)$", re.I)
+LOGGER = logging.getLogger("ksle-monitor")
+
+
+class MonitorError(Exception):
+    """Configuration, API, or saved-state error."""
+
+
+@dataclass(frozen=True)
+class Stock:
+    fqn: str
+    storage: str
+    datacenter: str
+    status: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.fqn}@{self.datacenter}"
+
+    @property
+    def available(self) -> bool:
+        return bool(AVAILABLE_STATUS.fullmatch(self.status))
+
+    @property
+    def preferred(self) -> bool:
+        return self.storage == PREFERRED_STORAGE
+
+    @property
+    def storage_label(self) -> str:
+        return STORAGE_NAMES.get(self.storage, self.storage)
+
+
+@dataclass(frozen=True)
+class MailConfig:
+    host: str
+    port: int
+    security: str
+    username: str
+    password: str
+    sender: str
+    recipients: tuple[str, ...]
+
+
+def retrieve_stock(timeout_seconds: int = 15) -> list[Stock]:
+    url = f"{API_URL}?{urlencode({'planCode': PLAN_CODE})}"
+    request = Request(url, headers={"Accept": "application/json", "User-Agent": "ksle-monitor/1.0"})
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            # Keep response bounded in case of an incorrect proxy response.
+            data = response.read(2_000_001)
+            if len(data) > 2_000_000:
+                raise MonitorError("API response unexpectedly large")
+        payload = json.loads(data)
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        raise MonitorError(f"Unable to read OVHcloud stock API: {exc}") from exc
+    return parse_stock(payload)
+
+
+def parse_stock(payload: Any) -> list[Stock]:
+    if not isinstance(payload, list):
+        raise MonitorError("OVHcloud API returned non-list JSON")
+
+    stocks: dict[str, Stock] = {}
+    plan_rows = 0
+    for row in payload:
+        if not isinstance(row, dict) or row.get("planCode") != PLAN_CODE:
+            continue
+        plan_rows += 1
+        fqn = row.get("fqn")
+        storage = row.get("storage")
+        datacenters = row.get("datacenters")
+        if not isinstance(fqn, str) or not fqn.startswith(f"{PLAN_CODE}."):
+            raise MonitorError("Unexpected or missing plan FQN in OVHcloud API")
+        if not isinstance(storage, str) or not storage:
+            raise MonitorError("Missing storage code in OVHcloud API")
+        if not isinstance(datacenters, list):
+            raise MonitorError("Missing datacenters in OVHcloud API")
+
+        for dc in datacenters:
+            if not isinstance(dc, dict):
+                raise MonitorError("Invalid datacenter object in OVHcloud API")
+            name, status = dc.get("datacenter"), dc.get("availability")
+            if not isinstance(name, str) or not name.strip() or not isinstance(status, str):
+                raise MonitorError("Missing datacenter name/status in OVHcloud API")
+            stock = Stock(fqn=fqn, storage=storage, datacenter=name.lower(), status=status)
+            if stock.key in stocks:
+                raise MonitorError(f"Duplicate configuration in OVHcloud API: {stock.key}")
+            stocks[stock.key] = stock
+
+    if not plan_rows or not stocks:
+        # An empty/partial API response must not reset alert history.
+        raise MonitorError(f"No {PLAN_CODE} stock records in OVHcloud API response")
+    return sorted(stocks.values(), key=stock_sort_key)
+
+
+def stock_sort_key(stock: Stock) -> tuple[int, str, str]:
+    return (not stock.preferred, stock.storage, stock.datacenter)
+
+
+def state_path() -> Path:
+    configured = os.getenv("STATE_FILE")
+    if configured:
+        return Path(configured).expanduser()
+    systemd_dir = os.getenv("STATE_DIRECTORY")
+    if systemd_dir:
+        return Path(systemd_dir.split(":")[0]) / "state.json"
+    return Path.home() / ".local/state/ovh-ksle-monitor/state.json"
+
+
+def load_alerted(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if (not isinstance(data, dict) or data.get("version") != 1
+                or not isinstance(data.get("alerted"), list)
+                or not all(isinstance(key, str) for key in data["alerted"])):
+            raise ValueError("Unexpected state structure")
+        return set(data["alerted"])
+    except (OSError, ValueError) as exc:
+        # Stop rather than potentially sending duplicate emails on corruption.
+        raise MonitorError(f"Cannot load alert history from {path}: {exc}") from exc
+
+
+def save_alerted(path: Path, alerted: set[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    content = json.dumps({"version": 1, "alerted": sorted(alerted)}, indent=2) + "\n"
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=".state-", delete=False
+        ) as handle:
+            temp_path = Path(handle.name)
+            os.chmod(temp_path, 0o600)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except OSError as exc:
+        raise MonitorError(f"Cannot save alert history to {path}: {exc}") from exc
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def transition(stocks: list[Stock], previous: set[str]) -> tuple[list[Stock], set[str]]:
+    """Find new stock events; preserve history for temporarily missing rows.
+
+    Only an explicitly observed unavailable status resets a previously alerted
+    configuration, so the next available transition can alert again.
+    """
+    by_key = {stock.key: stock for stock in stocks}
+    still_alerted = {
+        key for key in previous
+        if key not in by_key or by_key[key].available
+    }
+    newly_available = [
+        stock for stock in stocks if stock.available and stock.key not in previous
+    ]
+    return sorted(newly_available, key=stock_sort_key), still_alerted
+
+
+def mail_config() -> MailConfig:
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM", "").strip()
+    recipients = tuple(x.strip() for x in os.getenv("SMTP_TO", "").split(",") if x.strip())
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    security = os.getenv("SMTP_SECURITY", "starttls").lower()
+    if not host or not sender or not recipients:
+        raise MonitorError("SMTP_HOST, SMTP_FROM and SMTP_TO must be configured")
+    if security not in {"starttls", "ssl"}:
+        raise MonitorError("SMTP_SECURITY must be 'starttls' or 'ssl'")
+    if bool(username) != bool(password):
+        raise MonitorError("Set both SMTP_USERNAME and SMTP_PASSWORD, or neither")
+    try:
+        port = int(os.getenv("SMTP_PORT", "465" if security == "ssl" else "587"))
+    except ValueError as exc:
+        raise MonitorError("SMTP_PORT must be numeric") from exc
+    if not 1 <= port <= 65535:
+        raise MonitorError("SMTP_PORT outside valid range")
+    return MailConfig(host, port, security, username, password, sender, recipients)
+
+
+def send_mail(config: MailConfig, subject: str, body: str) -> None:
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = config.sender
+    message["To"] = ", ".join(config.recipients)
+    message.set_content(body)
+    context = ssl.create_default_context()
+    try:
+        if config.security == "ssl":
+            with smtplib.SMTP_SSL(config.host, config.port, timeout=20, context=context) as server:
+                if config.username:
+                    server.login(config.username, config.password)
+                refused = server.send_message(message)
+        else:
+            with smtplib.SMTP(config.host, config.port, timeout=20) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.ehlo()
+                if config.username:
+                    server.login(config.username, config.password)
+                refused = server.send_message(message)
+        if refused:
+            raise MonitorError(f"SMTP rejected some recipients: {', '.join(refused)}")
+    except (smtplib.SMTPException, OSError) as exc:
+        raise MonitorError(f"Email delivery failed: {exc}") from exc
+
+
+def alert_content(stocks: list[Stock]) -> tuple[str, str]:
+    preferred_count = sum(stock.preferred for stock in stocks)
+    marker = " - preferred disks!" if preferred_count else ""
+    subject = f"[OVH STOCK] KS-LE-6: {len(stocks)} new availability event(s){marker}"
+    lines = [
+        "OVHcloud KS-LE-6 is reported available in these configurations:",
+        "",
+    ]
+    for stock in sorted(stocks, key=stock_sort_key):
+        lines.extend([
+            f"{'[PREFERRED] ' if stock.preferred else ''}{stock.storage_label}",
+            f"  Datacenter: {stock.datacenter.upper()}",
+            f"  API availability: {stock.status}",
+            "",
+        ])
+    lines.extend([
+        f"Check and order: {PRODUCT_URL}",
+        "",
+        "This is an automated stock notification, not a reservation or purchase.",
+        "Availability may change before checkout. OVHcloud confirms final stock.",
+        f"Checked at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+    ])
+    return subject, "\n".join(lines)
+
+
+def run_once(stocks: list[Stock], path: Path, config: MailConfig | None, dry_run: bool) -> int:
+    previous = load_alerted(path)
+    new, retained = transition(stocks, previous)
+    currently_available = sum(stock.available for stock in stocks)
+    LOGGER.info(
+        "%s: %d configurations/datacenters, %d available, %d new alert(s)",
+        PLAN_CODE, len(stocks), currently_available, len(new),
+    )
+    if dry_run:
+        for stock in new:
+            LOGGER.info("DRY RUN alert: %s | %s | %s", stock.storage_label, stock.datacenter.upper(), stock.status)
+        return 0
+    if config is None:
+        raise MonitorError("SMTP settings required for a real monitoring run")
+
+    if new:
+        subject, body = alert_content(new)
+        # Do not mark an alert as sent until SMTP accepts the message.
+        # We also write the observed out-of-stock resets on SMTP failures.
+        try:
+            send_mail(config, subject, body)
+        except MonitorError:
+            if retained != previous:
+                save_alerted(path, retained)
+            raise
+        retained.update(stock.key for stock in new)
+        LOGGER.info("Sent one alert email for %d newly available option(s)", len(new))
+    if retained != previous:
+        save_alerted(path, retained)
+    return 0
+
+
+def print_stock(stocks: list[Stock]) -> None:
+    for stock in stocks:
+        marker = " *preferred*" if stock.preferred else ""
+        print(f"{stock.datacenter.upper():<6} {stock.status:<12} {stock.storage_label}{marker}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="OVHcloud KS-LE-6 stock monitor")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--once", action="store_true", help="Check stock, email new availability, update history (default)")
+    group.add_argument("--check", action="store_true", help="Check stock without sending email or changing history")
+    group.add_argument("--list", action="store_true", help="Print all API-reported locations and configurations")
+    group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    try:
+        if args.send_test_email:
+            send_mail(mail_config(), "[OVH STOCK] Test email", "KS-LE-6 monitor SMTP delivery is working.\n")
+            LOGGER.info("Test email accepted by SMTP server")
+            return 0
+
+        stocks = retrieve_stock(int(os.getenv("HTTP_TIMEOUT", "15")))
+        if args.list:
+            print_stock(stocks)
+            return 0
+        config = None if args.check else mail_config()
+        return run_once(stocks, state_path(), config, dry_run=args.check)
+    except (MonitorError, ValueError) as exc:
+        LOGGER.error("%s", exc)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
