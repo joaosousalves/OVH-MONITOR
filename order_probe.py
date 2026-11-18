@@ -145,8 +145,46 @@ class OVHCartClient:
             raise OrderProbeError(f"Non-JSON API response for {method} {path}") from exc
 
 
+def parse_hardware_fqn(target_fqn: str, plan_code: str) -> tuple[str, str]:
+    """Return the exact RAM and storage codes from an OVH stock FQN."""
+    if not isinstance(target_fqn, str) or len(target_fqn) > 250:
+        raise OrderProbeError("Invalid hardware FQN")
+    parts = target_fqn.split(".")
+    if (len(parts) != 3 or parts[0] != plan_code
+            or not parts[1].startswith("ram-")
+            or not all(re.fullmatch(r"[a-z0-9-]+", item) for item in parts[1:])):
+        raise OrderProbeError("Hardware FQN does not match the selected test plan")
+    return parts[1], parts[2]
+
+
+def addon_hardware_code(addon_code: str, plan_code: str) -> str:
+    """Normalize the public catalog addon to the stock FQN component."""
+    suffix = "-" + plan_code
+    return addon_code[:-len(suffix)] if addon_code.endswith(suffix) else addon_code
+
+
+def verify_available_test_fqn(plan_code: str, target_fqn: str, datacenter: str) -> None:
+    """Public, read-only stock check before creating a cart."""
+    from ksle_monitor import MonitorError, retrieve_stock
+    parse_hardware_fqn(target_fqn, plan_code)
+    try:
+        stocks = retrieve_stock(plan_code=plan_code)
+    except MonitorError as exc:
+        raise OrderProbeError(f"Unable to verify current {plan_code} stock: {exc}") from exc
+    match = next((item for item in stocks
+                  if item.fqn == target_fqn and item.datacenter == datacenter.lower()), None)
+    if match is None:
+        raise OrderProbeError("Requested hardware FQN/datacenter not present in the stock API; no cart created")
+    if not match.available:
+        raise OrderProbeError(
+            f"Requested configuration now has status {match.status} in {datacenter.upper()}; "
+            "no cart created"
+        )
+
+
 def catalog_selection(catalog: Any, storage_option: str, datacenter: str,
-                      plan_code: str = PLAN_CODE) -> tuple[dict, list[str]]:
+                      plan_code: str = PLAN_CODE,
+                      target_fqn: str | None = None) -> tuple[dict, list[str]]:
     if not isinstance(catalog, dict):
         raise OrderProbeError("Public Eco catalog has an unexpected format")
     plans = catalog.get("plans")
@@ -164,16 +202,31 @@ def catalog_selection(catalog: Any, storage_option: str, datacenter: str,
     if "none_64.en" not in allowed_config.get("dedicated_os", []):
         raise OrderProbeError("Expected OS option none_64.en is unavailable")
 
+    target_memory = target_storage = None
+    if target_fqn is not None:
+        target_memory, target_storage = parse_hardware_fqn(target_fqn, plan_code)
     chosen_addons: list[str] = []
     seen_storage = False
+    seen_memory = False
     for family in plan.get("addonFamilies", []):
         if not isinstance(family, dict) or not family.get("mandatory"):
             continue
         addons = family.get("addons")
         if not isinstance(addons, list) or not addons:
             raise OrderProbeError("Invalid mandatory addon family")
-        if family.get("name") == "storage":
+        name = family.get("name")
+        if name == "storage":
             seen_storage = True
+        if name == "memory":
+            seen_memory = True
+        wanted = target_storage if name == "storage" else target_memory if name == "memory" else None
+        if wanted is not None:
+            matches = [code for code in addons
+                       if isinstance(code, str) and addon_hardware_code(code, plan_code) == wanted]
+            if len(matches) != 1:
+                raise OrderProbeError(f"Hardware {name}={wanted} has no unique matching catalog addon")
+            chosen_addons.append(matches[0])
+        elif name == "storage":
             selected_storage = family.get("default") if storage_option == "default" else storage_option
             if selected_storage not in addons:
                 raise OrderProbeError(f"Storage option {selected_storage} is not available for {plan_code}")
@@ -181,10 +234,10 @@ def catalog_selection(catalog: Any, storage_option: str, datacenter: str,
         else:
             default = family.get("default")
             if default not in addons:
-                raise OrderProbeError(f"No valid default for {family.get('name')} addon")
+                raise OrderProbeError(f"No valid default for {name} addon")
             chosen_addons.append(default)
-    if not seen_storage:
-        raise OrderProbeError("Storage addon family is missing from catalog")
+    if not seen_storage or (target_fqn is not None and not seen_memory):
+        raise OrderProbeError("Mandatory storage or memory addon family missing from catalog")
     return {"dedicated_datacenter": datacenter, "region": region, "dedicated_os": "none_64.en"}, chosen_addons
 
 
@@ -286,7 +339,7 @@ def extract_quote(quote_data: Any) -> str:
 
 def test_order(client: OVHCartClient, datacenter: str = "bhs",
                storage_option: str = PREFERRED_STORAGE_OPTION, subsidiary: str = "PT",
-               plan_code: str = PLAN_CODE) -> str:
+               plan_code: str = PLAN_CODE, target_fqn: str | None = None) -> str:
     """Build and quote a temporary cart; NEVER submit checkout or payment."""
     datacenter = datacenter.lower()
     if datacenter not in DATACENTERS:
@@ -296,10 +349,15 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
 
     if plan_code not in TEST_PLANS.values():
         raise OrderProbeError("Unsupported cart-test product")
-    if plan_code != PLAN_CODE and storage_option == PREFERRED_STORAGE_OPTION:
+    if target_fqn is not None:
+        parse_hardware_fqn(target_fqn, plan_code)
+        if storage_option not in ("preferred", "default"):
+            raise OrderProbeError("Use --test-fqn alone to select RAM and storage")
+    elif plan_code != PLAN_CODE and storage_option == PREFERRED_STORAGE_OPTION:
         raise OrderProbeError("Use --storage default for KS-LE-1")
     catalog = client.request("GET", "/order/catalog/public/eco", query={"ovhSubsidiary": subsidiary})
-    configurations, addons = catalog_selection(catalog, storage_option, datacenter, plan_code)
+    configurations, addons = catalog_selection(catalog, storage_option, datacenter, plan_code,
+                                               target_fqn=target_fqn)
 
     LOGGER.info("Starting temporary test cart for %s in %s (NO ORDER / NO PAYMENT)", plan_code, datacenter.upper())
     cart_id: str | None = None
@@ -347,7 +405,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                 LOGGER.warning("Unable to delete temporary test cart: %s", exc)
 
 
-def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6") -> int:
+def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
+                   target_fqn: str | None = None) -> int:
     token = os.getenv("OVH_TOKEN", "").strip()
     ak = os.getenv("OVH_APPLICATION_KEY", "").strip()
     secret = os.getenv("OVH_APPLICATION_SECRET", "").strip()
@@ -357,11 +416,13 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6") ->
         return 1
     storage_code = PREFERRED_STORAGE_OPTION if storage == "preferred" else storage
     try:
+        if target_fqn is not None:
+            verify_available_test_fqn(TEST_PLANS[test_plan], target_fqn, datacenter)
         client = OVHCartClient(
             token, application_key=ak, application_secret=secret, consumer_key=ck
         )
         result = test_order(client, datacenter=datacenter, storage_option=storage_code,
-                            plan_code=TEST_PLANS[test_plan])
+                            plan_code=TEST_PLANS[test_plan], target_fqn=target_fqn)
         print(result)
         return 0
     except OrderProbeError as exc:
