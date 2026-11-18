@@ -508,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--once", action="store_true", help="Check stock, email new availability, update history (default)")
     group.add_argument("--check", action="store_true", help="Check stock without sending email or changing history")
     group.add_argument("--list", action="store_true", help="Print all API-reported locations and configurations")
+    group.add_argument("--list-prices", action="store_true", help="Show cached public monthly catalog estimates (no cart)")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
     group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
     parser.add_argument("--datacenter", default="bhs", help="Datacenter for --test-order (default: bhs)")
@@ -519,6 +520,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.test_order:
             from order_probe import run_test_order
             return run_test_order(args.datacenter, args.storage)
+        if args.list_prices:
+            from pricing import cached_prices
+            prices = cached_prices(state_path().with_name("pricing-cache.json"))
+            if prices:
+                for storage, value in sorted(prices.items()):
+                    print(f"{STORAGE_NAMES.get(storage, storage)}: {value}")
+            else:
+                print("Sem preços de catálogo verificados; consultar o checkout OVHcloud.")
+            return 0
         if args.send_test_email:
             sample = Stock(
                 fqn=f"{PLAN_CODE}.ram-128g-ddr4-ecc-2400.{PREFERRED_STORAGE}",
