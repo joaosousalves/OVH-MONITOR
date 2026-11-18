@@ -1,11 +1,12 @@
-# Copy to /etc/ovh-ksle-monitor.env (root-owned, mode 0600).
-# OVHcloud availability API requires no API key.
-# Do not put real credentials in a repository.
-SMTP_HOST=smtp.example.com
+# OVHcloud KS-LE-6 monitor: production settings for OVH Mail.
+# Install ONLY on the Linux server as /etc/ovh-ksle-monitor.env.
+# Do not commit credentials to GitHub. systemd EnvironmentFile syntax (not Python/Django).
+SMTP_HOST=smtp.mail.ovh.net
 SMTP_PORT=587
 SMTP_SECURITY=starttls
-SMTP_USERNAME=alerts@example.com
-SMTP_PASSWORD=replace-with-an-app-password
-SMTP_FROM=alerts@example.com
-SMTP_TO=your-email@example.com
+SMTP_USERNAME=donotreply@basketly.eu
+SMTP_PASSWORD=REPLACE_WITH_YOUR_SMTP_PASSWORD
+SMTP_FROM="Basketly <donotreply@basketly.eu>"
+SMTP_TO=REPLACE_WITH_YOUR_ALERT_RECIPIENT_EMAIL
+SMTP_TIMEOUT=15
 HTTP_TIMEOUT=15
