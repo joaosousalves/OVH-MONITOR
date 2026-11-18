@@ -1,0 +1,11 @@
+# Never commit local runtime state, virtual environments or SMTP secrets.
+.env
+*.env
+*.local
+state.json
+*.log
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
