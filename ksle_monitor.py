@@ -8,6 +8,8 @@ Python dependencies or OVHcloud API credentials are needed.
 from __future__ import annotations
 
 import argparse
+from email.utils import parsedate_to_datetime
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -46,6 +48,31 @@ LOGGER = logging.getLogger("ksle-monitor")
 
 class MonitorError(Exception):
     """Configuration, API, or saved-state error."""
+
+
+class APITransientError(MonitorError):
+    """Temporary API failure; store persistent cooldown before returning."""
+
+    def __init__(self, message: str, retry_after: int | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def retry_after_seconds(value: str | None, now: float | None = None) -> int | None:
+    """Understand Retry-After as seconds or HTTP date, capped at one day."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdecimal():
+        return min(86400, max(0, int(value)))
+    try:
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:
+            return None
+        return min(86400, max(0, int(date.timestamp() - (time.time() if now is None else now) + 0.999)))
+    except (ValueError, TypeError, OverflowError):
+        return None
+
 
 
 @dataclass(frozen=True)
@@ -94,8 +121,15 @@ def retrieve_stock(timeout_seconds: int = 15) -> list[Stock]:
             if len(data) > 2_000_000:
                 raise MonitorError("API response unexpectedly large")
         payload = json.loads(data)
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
-        raise MonitorError(f"Unable to read OVHcloud stock API: {exc}") from exc
+    except HTTPError as exc:
+        if exc.code == 429 or 500 <= exc.code < 600:
+            retry = retry_after_seconds(exc.headers.get("Retry-After") if exc.headers else None)
+            raise APITransientError(f"OVHcloud API HTTP {exc.code}", retry_after=retry) from exc
+        raise MonitorError(f"OVHcloud API HTTP {exc.code}") from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        raise APITransientError(f"Temporary OVHcloud connection error: {exc}") from exc
+    except ValueError as exc:
+        raise MonitorError(f"Invalid OVHcloud JSON response: {exc}") from exc
     return parse_stock(payload)
 
 
@@ -148,6 +182,67 @@ def state_path() -> Path:
     if systemd_dir:
         return Path(systemd_dir.split(":")[0]) / "state.json"
     return Path.home() / ".local/state/ovh-ksle-monitor/state.json"
+
+
+def cooldown_path() -> Path:
+    """Keep API rate-limit state separate from alert history."""
+    return state_path().with_name("api-backoff.json")
+
+
+def read_cooldown(path: Path) -> tuple[float, int]:
+    if not path.exists():
+        return 0.0, 0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        until, failures = data["until"], data["failures"]
+        if not isinstance(until, (int, float)) or not isinstance(failures, int) or failures < 0:
+            raise ValueError("Invalid cooldown fields")
+        return float(until), failures
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise MonitorError(f"Cannot load API cooldown from {path}: {exc}") from exc
+
+
+def write_cooldown(path: Path, until: float, failures: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=".api-backoff-", delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            os.chmod(temporary, 0o600)
+            json.dump({"until": until, "failures": failures}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except OSError as exc:
+        raise MonitorError(f"Cannot save API cooldown: {exc}") from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def api_cooldown_active(path: Path, now: float | None = None) -> bool:
+    until, _ = read_cooldown(path)
+    remaining = until - (time.time() if now is None else now)
+    if remaining > 0:
+        LOGGER.warning("API cooldown active: skipping request for another %.0f seconds", remaining)
+        return True
+    return False
+
+
+def apply_api_failure(path: Path, error: APITransientError, now: float | None = None) -> int:
+    now = time.time() if now is None else now
+    _, previous_failures = read_cooldown(path)
+    failures = previous_failures + 1
+    # Exponential backoff: 60, 120, 240, 480, 960, capped at 1800 seconds.
+    delay = min(1800, 60 * (2 ** min(failures - 1, 5)))
+    if error.retry_after is not None:
+        delay = max(delay, error.retry_after)
+    write_cooldown(path, now + delay, failures)
+    LOGGER.warning("Temporary OVH API error: %s; pausing checks for %d seconds", error, delay)
+    return delay
 
 
 def load_alerted(path: Path) -> set[str]:
@@ -435,7 +530,22 @@ def main(argv: list[str] | None = None) -> int:
             LOGGER.info("Test email accepted by SMTP server")
             return 0
 
-        stocks = retrieve_stock(int(os.getenv("HTTP_TIMEOUT", "15")))
+        # Manual --list and --check are independent diagnostics; the timer's
+        # default --once obeys a persistent cooldown across service restarts.
+        cooldown = cooldown_path() if not (args.list or args.check) else None
+        if cooldown is not None and api_cooldown_active(cooldown):
+            return 0
+        try:
+            stocks = retrieve_stock(int(os.getenv("HTTP_TIMEOUT", "15")))
+        except APITransientError as exc:
+            if cooldown is not None:
+                apply_api_failure(cooldown, exc)
+                return 0
+            raise
+        if cooldown is not None:
+            until, failures = read_cooldown(cooldown)
+            if until or failures:
+                write_cooldown(cooldown, 0, 0)
         if args.list:
             print_stock(stocks)
             return 0
