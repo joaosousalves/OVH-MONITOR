@@ -81,6 +81,7 @@ class MailConfig:
     password: str
     sender: str
     recipients: tuple[str, ...]
+    timeout: int = 15
 
 
 def retrieve_stock(timeout_seconds: int = 15) -> list[Stock]:
@@ -221,7 +222,13 @@ def mail_config() -> MailConfig:
         raise MonitorError("SMTP_PORT must be numeric") from exc
     if not 1 <= port <= 65535:
         raise MonitorError("SMTP_PORT outside valid range")
-    return MailConfig(host, port, security, username, password, sender, recipients)
+    try:
+        timeout = int(os.getenv("SMTP_TIMEOUT", "15"))
+    except ValueError as exc:
+        raise MonitorError("SMTP_TIMEOUT must be numeric") from exc
+    if not 1 <= timeout <= 300:
+        raise MonitorError("SMTP_TIMEOUT must be between 1 and 300 seconds")
+    return MailConfig(host, port, security, username, password, sender, recipients, timeout)
 
 
 def send_mail(config: MailConfig, subject: str, body: str) -> None:
@@ -233,12 +240,12 @@ def send_mail(config: MailConfig, subject: str, body: str) -> None:
     context = ssl.create_default_context()
     try:
         if config.security == "ssl":
-            with smtplib.SMTP_SSL(config.host, config.port, timeout=20, context=context) as server:
+            with smtplib.SMTP_SSL(config.host, config.port, timeout=config.timeout, context=context) as server:
                 if config.username:
                     server.login(config.username, config.password)
                 refused = server.send_message(message)
         else:
-            with smtplib.SMTP(config.host, config.port, timeout=20) as server:
+            with smtplib.SMTP(config.host, config.port, timeout=config.timeout) as server:
                 server.ehlo()
                 server.starttls(context=context)
                 server.ehlo()
