@@ -124,6 +124,8 @@ class MonitorTests(unittest.TestCase):
         self.assertIn("GRA", html)
         self.assertIn("Ver servidor na OVHcloud", html)
         self.assertIn(monitor.PRODUCT_URL, html)
+        self.assertIn('style="display:block;padding:14px 20px', html)
+        self.assertIn("Se o botão não abrir, utiliza este link:", html)
         self.assertLess(html.index("DISCOS PREFERIDOS"), html.index("2 x 1.92 TB NVMe"))
 
     def test_html_escapes_api_values(self):
