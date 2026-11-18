@@ -25,7 +25,7 @@ The first live check emails any currently available options. An empty or malform
 
 ## OVH Mail SMTP configuration (Basketly sender)
 
-This application uses `SMTP_*` systemd environment variables (not Django's `EMAIL_HOST` settings). OVH's port **587** uses **STARTTLS**, so set `SMTP_SECURITY=starttls` (not `ssl`). The email sender is `Basketly <donotreply@basketly.eu>` and the envelope SMTP account can be `donotreply@basketly.eu` if it has sending permission. Set `SMTP_TO` to **your actual recipient address**.
+This application uses `SMTP_*` systemd environment variables (not Django's `EMAIL_HOST` settings). OVH's port **587** uses **STARTTLS**, so set `SMTP_SECURITY=starttls` (not `ssl`). The SMTP login is `info@basketly.eu`, while the visible sender is `Basketly <donotreply@basketly.eu>`. Verify OVHcloud allows `info@basketly.eu` to send using the `donotreply@basketly.eu` address. Set `SMTP_TO` to **your actual recipient address**.
 
 Create a **local, root-only** environment file named **`/etc/ovh-ksle-monitor.env`**, *outside the Git repository*. Example:
 
@@ -33,7 +33,7 @@ Create a **local, root-only** environment file named **`/etc/ovh-ksle-monitor.en
 SMTP_HOST=smtp.mail.ovh.net
 SMTP_PORT=587
 SMTP_SECURITY=starttls
-SMTP_USERNAME=donotreply@basketly.eu
+SMTP_USERNAME=info@basketly.eu
 SMTP_PASSWORD=REPLACE_WITH_YOUR_SMTP_PASSWORD
 SMTP_FROM="Basketly <donotreply@basketly.eu>"
 SMTP_TO=your-personal-email@example.com
