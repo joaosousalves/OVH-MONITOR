@@ -106,6 +106,28 @@ class OrderProbeTests(unittest.TestCase):
         self.assertIn("duration=P12M", message)
         self.assertNotIn("secret-cart-id", message)
 
+    def test_matching_offer_diagnostic_exposes_only_field_names(self):
+        offer = {
+            "planCode": probe.PLAN_CODE,
+            "duration": None,
+            "pricingMode": None,
+            "prices": {"recurring": [{"phase": 1, "interval": 1, "price": 123}]},
+            "configuration": [{"name": "foo", "value": "sensitive-account-123"}],
+            "secretToken": "really-secret",
+        }
+        message = probe.offer_diagnostic([offer])
+        self.assertIn("top-level=[", message)
+        self.assertIn("prices=object(recurring)", message)
+        self.assertIn("prices.recurring[0]=object(interval, phase, price)", message)
+        self.assertNotIn("sensitive-account-123", message)
+        self.assertNotIn("really-secret", message)
+
+    def test_non_matching_offer_schema_not_emitted(self):
+        offers = [{"planCode": "other", "secretToken": "do-not-expose"}]
+        message = probe.offer_diagnostic(offers)
+        self.assertNotIn("Matching offer fields:", message)
+        self.assertNotIn("do-not-expose", message)
+
     def test_empty_eco_offer_list_diagnosis(self):
         with self.assertRaises(probe.OrderProbeError) as caught:
             probe.find_monthly_offer([])
