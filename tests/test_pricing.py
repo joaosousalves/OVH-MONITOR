@@ -63,6 +63,51 @@ class PriceTests(unittest.TestCase):
         self.assertEqual(len(diagnostic["families"]), 3)
         self.assertEqual(diagnostic["base_pricings"][0]["duration"], "P1M")
 
+    def test_actual_ovh_eco_phase_interval_monthly_pricing(self):
+        """Real KS-LE-6 sample from the PT Eco catalog, 2026-11-18."""
+        data = fixture()
+        data["plans"][0]["pricings"] = [
+            {"phase": 0, "interval": 0, "price": 2699000000},
+            {"phase": 1, "interval": 1, "price": 2699000000},
+            {"phase": 0, "interval": 0, "price": 0},
+            {"phase": 1, "interval": 12, "price": 30769000000},
+            {"phase": 0, "interval": 0, "price": 0},
+            {"phase": 1, "interval": 24, "price": 61537000000},
+        ]
+        for addon in data["addons"]:
+            addon["pricings"] = [
+                {"phase": 0, "interval": 0, "price": 0},
+                {"phase": 1, "interval": 1, "price": 0},
+                {"phase": 0, "interval": 0, "price": 0},
+                {"phase": 1, "interval": 12, "price": 0},
+            ]
+        # Bandwidth returns duplicate zero monthly prices in the real catalog.
+        data["addons"][-1]["pricings"].append(
+            {"phase": 1, "interval": 1, "price": 0}
+        )
+        result = pricing.extract_prices(data)
+        self.assertEqual(
+            result["hybridsoftraid-2x4000sa-2x500nvme"],
+            "26.99 EUR/mês sem IVA (estimativa de catálogo)"
+        )
+
+    def test_different_monthly_prices_are_rejected(self):
+        data = fixture()
+        data["plans"][0]["pricings"] = [
+            {"phase": 1, "interval": 1, "price": 2699000000},
+            {"phase": 1, "interval": 1, "price": 2799000000},
+        ]
+        self.assertEqual(pricing.extract_prices(data), {})
+
+    def test_cache_version_forces_refresh_of_old_empty_prices(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "pricing-cache.json"
+            pricing.save_cache(path, {"checked_at": 995, "prices": {}})
+            with patch.object(pricing, "fetch_catalog", return_value=fixture()) as fetch:
+                self.assertEqual(len(pricing.cached_prices(path, now=1000)), 1)
+                fetch.assert_called_once()
+                self.assertEqual(pricing.read_cache(path)["schema_version"], 2)
+
     def test_cache_fresh_and_stale(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "pricing-cache.json"
