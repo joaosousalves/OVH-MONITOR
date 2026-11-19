@@ -32,8 +32,8 @@ from order_probe import (
 
 LOG = logging.getLogger("ksle-purchase-preview")
 # These four KS-LE-6 layouts have 128 GB RAM; order is purchase priority.
-# The default primary preference is unchanged and all alternatives are
-# preview candidates ONLY until a separate live checkout is approved.
+# All four exact 128 GB disk layouts are approved as future purchase
+# preferences by the owner. This does NOT enable live checkout/payment.
 RAM_CODE = REQUIRED_MEMORY
 STORAGE_PRIORITIES = (
     "hybridsoftraid-2x4000sa-2x500nvme",  # 2 x 512 GB NVMe + 2 x 4 TB HDD
@@ -93,6 +93,9 @@ class PurchasePolicy:
     max_total_eur: Decimal
     datacenters: tuple[str, ...]
     max_servers: int = 2
+    # None is deliberately invalid for purchase previews; callers must set
+    # a separate recurring charge ceiling, not infer it from first checkout.
+    max_monthly_eur: Decimal | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "PurchasePolicy":
@@ -113,6 +116,11 @@ class PurchasePolicy:
             raise PurchaseSafetyError(
                 "Set OVH_AUTO_BUY_MAX_TOTAL_EUR explicitly in /etc/ovh-ksle-order.env"
             )
+        raw_monthly = env.get("OVH_AUTO_BUY_MAX_MONTHLY_EUR", "").strip()
+        if not raw_monthly:
+            raise PurchaseSafetyError(
+                "Set OVH_AUTO_BUY_MAX_MONTHLY_EUR explicitly in /etc/ovh-ksle-order.env"
+            )
         max_servers_raw = env.get("OVH_AUTO_BUY_MAX_SERVERS", "2").strip()
         if max_servers_raw not in ("1", "2"):
             raise PurchaseSafetyError(
@@ -122,6 +130,9 @@ class PurchasePolicy:
         limit = parse_eur(raw_limit, label="OVH_AUTO_BUY_MAX_TOTAL_EUR")
         if limit > Decimal("500.00"):
             raise PurchaseSafetyError("Safety ceiling: max allowed initial total is 500.00 EUR")
+        monthly_limit = parse_eur(raw_monthly, label="OVH_AUTO_BUY_MAX_MONTHLY_EUR")
+        if monthly_limit > Decimal("500.00"):
+            raise PurchaseSafetyError("Safety ceiling: max allowed monthly total is 500.00 EUR")
         dc_values = env.get("OVH_AUTO_BUY_ALLOWED_DATACENTERS", ",".join(DATACENTERS))
         allowed = [value.strip().lower() for value in dc_values.split(",")]
         if not allowed or any(value not in DATACENTERS for value in allowed):
@@ -129,7 +140,7 @@ class PurchasePolicy:
         if len(set(allowed)) != len(allowed):
             raise PurchaseSafetyError("Duplicate datacenter in OVH_AUTO_BUY_ALLOWED_DATACENTERS")
         return cls(enabled=False, max_total_eur=limit, datacenters=tuple(allowed),
-                   max_servers=max_servers)
+                   max_servers=max_servers, max_monthly_eur=monthly_limit)
 
 
 def choose_candidate(stocks: list[Stock], policy: PurchasePolicy) -> Stock | None:
@@ -324,6 +335,10 @@ def preview(policy: PurchasePolicy, *, stocks: list[Stock],
     """
     if policy.enabled:
         raise PurchaseSafetyError("Checkout is disabled in this release")
+    if (not isinstance(policy.max_monthly_eur, Decimal)
+            or not policy.max_monthly_eur.is_finite()
+            or policy.max_monthly_eur <= 0):
+        raise PurchaseSafetyError("Missing validated VAT-inclusive monthly EUR ceiling")
     if journal.read() is not None:
         raise PurchaseSafetyError(
             "An earlier purchase was reserved/submitted or is uncertain. "
@@ -365,7 +380,9 @@ def preview(policy: PurchasePolicy, *, stocks: list[Stock],
         f"PREVIEW ONLY: eligible {PLAN_CODE}, {choice.datacenter.upper()}, "
         f"{choice.fqn}; initial total {amount:.2f} EUR incl. VAT "
         f"<= cap {policy.max_total_eur:.2f} EUR. "
-        "No order/payment submitted. Recurring renewal charge not independently verified."
+        f"Monthly VAT-inclusive cap {policy.max_monthly_eur:.2f} EUR; "
+        "recurring renewal charge NOT independently verified. "
+        "No order/payment submitted."
     )
 
 
@@ -431,3 +448,4 @@ def run_list_disk_preferences() -> int:
     except (PurchaseSafetyError, MonitorError, APITransientError) as exc:
         LOG.error("Disk inventory not confirmed: %s", exc)
         return 1
+

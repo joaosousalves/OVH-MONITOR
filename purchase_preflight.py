@@ -64,11 +64,13 @@ def preflight(policy: PurchasePolicy, *, stocks: list[Stock],
     )
     remaining = policy.max_servers - len(attempts)
     return (
-        f"PREFLIGHT ONLY (NO PURCHASE): {quote_report} "
+        f"PREFLIGHT PARTIAL (NO PURCHASE; MONTHLY PRICE UNVERIFIED): {quote_report} "
         f"Payment check: {payment_report} "
         f"{remaining}/{policy.max_servers} local reservation slots remain. "
         f"{disk_approval} The account-wide order count, recurring monthly "
-        "cost and payment success are NOT verified."
+        "cost and payment success are NOT verified. "
+        "An initial-charge quote does not establish a monthly renewal price; "
+        "live checkout remains BLOCKED until verified against the monthly cap."
     )
 
 

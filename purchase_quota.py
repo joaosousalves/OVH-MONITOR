@@ -38,9 +38,10 @@ class PurchaseQuota:
 
     Multiple purchasing hosts must NOT use this local filesystem lock.
     The caller receives an integer slot 1 or 2 (not a plan identifier).
-    No live checkout method is provided here.
+    All four 128 GB disk layouts are approved by the owner. No live
+    checkout method is provided here.
     """
-    def __init__(self, path: Path, approved_fqns: tuple[str, ...] = (EXPECTED_FQN,),
+    def __init__(self, path: Path, approved_fqns: tuple[str, ...] = APPROVED_FQNS,
                  max_servers: int = GLOBAL_LIMIT):
         if type(max_servers) is not int or max_servers not in (1, 2):
             raise PurchaseSafetyError("Global max server count must be 1 or 2")
@@ -245,13 +246,14 @@ def run_quota_status() -> int:
                 f"  Slot {item['slot']}: {item['fqn']} / "
                 f"{item['datacenter'].upper()} / {item['status']}"
             )
-        print("Preview disk choices (not all authorized for purchase): " + ", ".join(
+        print("Approved future disk choices (highest priority first): " + ", ".join(
             fqn.split(".")[2] for fqn in APPROVED_FQNS
         ))
-        print("Purchase approval currently limited to the original hybrid disk FQN.")
-        print("Same or different disks can fill both slots once explicitly approved.")
+        print("All four 128GB disk layouts are approved as purchase preferences.")
+        print("Same or different disks can fill both slots, with global max two.")
         print("Only Europe or Canada; checkout DISABLED. No reservation created.")
         return 0
     except (PurchaseSafetyError, OSError, ValueError) as exc:
         print(f"Quota status unavailable; purchases blocked: {exc}")
         return 1
+

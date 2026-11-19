@@ -365,10 +365,11 @@ setting deliberately fails closed instead of buying.
 
 The separate manual `--purchase-preview` command:
 
-1. Checks the public stock feed for **only**
-   `27skle06-v1.ram-128g-ddr4-ecc-2400.hybridsoftraid-2x4000sa-2x500nvme`.
+1. Checks the public stock feed for the **four** owner-approved
+   `27skle06-v1.ram-128g-ddr4-ecc-2400.<storage>` disk layouts, in
+   priority order.
 2. Restricts candidates to the explicitly allowed datacenters.
-3. If that exact configuration is not available, exits with `WAITING`
+3. If no eligible configuration is available, exits with `WAITING`
    without creating an authenticated cart or touching purchase history.
 4. If available, rechecks the exact hardware/datacenter stock, prepares a
    temporary monthly `P1M/default` OVHcloud cart and obtains a **GET
@@ -376,8 +377,10 @@ The separate manual `--purchase-preview` command:
 5. Checks the checkout's structured `prices.withTax.value` amount and
    requires `currencyCode=EUR` and a value not exceeding
    `OVH_AUTO_BUY_MAX_TOTAL_EUR`. This cap is for the *initial payment
-   including VAT and setup fees*, **not a separately verified recurring
-   monthly renewal amount**. Missing or ambiguous data blocks the preview.
+   including VAT and setup fees*. The separate owner-approved
+   `OVH_AUTO_BUY_MAX_MONTHLY_EUR` cap is mandatory, but **the recurring
+   renewal cost is not independently verified by this quote**.
+   Missing or ambiguous initial price data blocks the preview.
 6. Deletes the temporary cart even after a price-policy failure and
    reports `PREVIEW ONLY` if all checks pass.
 
@@ -386,8 +389,8 @@ before any billable operation to guarantee an exclusive persistent
 one-purchase reservation, refusing retries if an attempt was made or its
 outcome is uncertain. The preview reads that journal but **never reserves
 anything**, so dry runs cannot silently consume the purchase allowance.
-**No live checkout, payment-readiness check, order reconciliation, or
-order-result email has been enabled yet.**
+**No live checkout, account-wide order reconciliation, or real order-result
+email has been enabled.** A separate GET-only payment readiness command exists.
 
 ### Configure the preview
 
@@ -397,15 +400,17 @@ new settings to that protected, root-only file:
 
 ```ini
 OVH_AUTO_BUY_ENABLED=false
-OVH_AUTO_BUY_MAX_TOTAL_EUR=45.00
+OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00
+OVH_AUTO_BUY_MAX_MONTHLY_EUR=35.00
 OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
 OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 ```
 
-`45.00` is merely an example cap and is **not purchasing consent**. Set
-your own upper limit before a live quote. There is also a hard-coded
-500 EUR upper bound to reduce accidental configuration mistakes; the
-future purchasing release should have a much lower, user-approved limit.
+`80.00` EUR initial (with VAT/setup) and `35.00` EUR monthly (with VAT)
+are the owner's confirmed **per-server maximums**. These separate
+caps are not permission to submit a purchase. The code refuses missing
+or invalid limits and retains a 500 EUR upper-bound safety check.
+The actual monthly renewal price remains unverified.
 The datacenter ordering represents preference only, not guaranteed stock.
 
 ```bash
@@ -491,14 +496,16 @@ The existing `/etc/ovh-ksle-order.env` should retain:
 
 ```ini
 OVH_AUTO_BUY_ENABLED=false
-OVH_AUTO_BUY_MAX_TOTAL_EUR=45.00
+OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00
+OVH_AUTO_BUY_MAX_MONTHLY_EUR=35.00
 OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
 OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 ```
 
-`45.00` is only an example cap for the first charge (including VAT);
-it is not consent to buy, and the offline simulator's `39.99` EUR
-example charge **is not an OVHcloud price**. Do not overwrite the API
+`80.00` EUR is the owner-approved first-charge maximum (with VAT),
+separate from the `35.00` EUR VAT-inclusive monthly cap. Neither
+is consent to buy, and the offline simulator's `39.99` EUR example
+charge **is not an OVHcloud price**. Do not overwrite the API
 credentials file when changing these settings.
 
 **No credentials or API calls needed for the offline simulator:**
@@ -561,13 +568,11 @@ Current disk order for purchase previews (highest preference first):
 | 3 | `softraid-3x1000nvme` | 3 × 1 TB NVMe |
 | 4 | `softraid-4x960ssd` | 4 × 960 GB SATA SSD |
 
-These are provisional *ordered preferences* for **read-only preview**
-until the user confirms final purchase criteria. The first choice is
-unchanged. **Only the original hybrid disk layout is authorized by the
-future quota by default; the other three are preview candidates, not
-yet approved purchases.** After choosing any additional disk layouts,
-their exact FQNs must be explicitly included in the future purchase
-worker's approved list. Exact hardware is validated against
+All four exact disk layouts have been **explicitly approved by the
+owner** as future purchase preferences, in the order shown. The first
+choice remains unchanged. The two-slot quota now accepts any of these
+FQNs by default, including the same FQN twice. This hardware approval
+does **not** activate billable checkout. Exact hardware is validated against
 `27skle06-v1.ram-128g-ddr4-ecc-2400.<storage>`. A fake/mismatched RAM or
 storage code is not eligible.
 
@@ -618,6 +623,8 @@ Add or correct these entries in the existing, root-only
 ```ini
 OVH_AUTO_BUY_ENABLED=false
 OVH_AUTO_BUY_MAX_SERVERS=2
+OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00
+OVH_AUTO_BUY_MAX_MONTHLY_EUR=35.00
 OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
 OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 ```
@@ -635,9 +642,9 @@ activating a future live purchaser.
 
 ### Activation remains blocked
 
-`--purchase-preview` now recognizes all four disk options for
-comparison, sorted by priority. This does **not** authorize a real
-purchase of an alternate disk layout. It refuses a cart when both
+`--purchase-preview` recognizes all four owner-approved disk
+configurations, sorted by priority. No real purchase can occur because
+live checkout remains disabled. It refuses a cart when both
 reservation slots are used or an earlier order is unresolved.
 The preview itself creates no reservation or billable order.
 
@@ -665,9 +672,11 @@ non-billable checks into **one manual, one-shot review**:
    initial price (EUR including VAT), and delete the temporary cart.
 4. Check the OVHcloud account's default payment method using **GET-only**
    APIs. No card details or payment identifiers are displayed.
-5. Report the number of local slots remaining. A non-primary disk
-   is marked **REVIEW REQUIRED** until explicitly authorized for
-   future purchasing.
+5. Report the number of local slots remaining. All four disk options
+   are approved preferences, but cannot be purchased yet.
+6. Display the monthly cap separately, with an explicit
+   **MONTHLY PRICE UNVERIFIED** warning: first payment is not a
+   trustworthy substitute for recurring renewal pricing.
 
 Run it manually using the existing root-only
 `/etc/ovh-ksle-order.env` configuration (if created):
@@ -689,14 +698,15 @@ submits `POST /order/cart/{cartId}/checkout` or payment requests.
 The order client still blocks those routes. The preflight creates
 **no quota reservations** and never changes existing order records.
 
-`OVH_AUTO_BUY_ENABLED=true` continues to fail closed. A positive
-preflight is **not** permission or a guarantee to buy. Before any
-live purchase implementation, the owner must approve an initial
-charge cap **and** a separately verified VAT-inclusive monthly
-renewal cap, explicitly approve acceptable disk layouts, review
-OVHcloud contract/payment implications and existing account orders,
-and authorize enabling real checkout. **No live order will be made
-by this release.**
+`OVH_AUTO_BUY_ENABLED=true` continues to fail closed. The owner has
+approved **80.00 EUR initial with VAT** and **35.00 EUR monthly with VAT**
+per server, and all four prioritized disk choices. However, the
+**actual recurring renewal cost remains UNVERIFIED**: the cap alone
+is not proof the seller's price meets it. Before any live implementation,
+we still need a reliable provider-sourced recurring price, OVHcloud
+contract/payment review, reconciliation against orders already in the
+account, and separate authorization to activate checkout.
+**No live order will be made by this release.**
 
 ## Troubleshooting
 
@@ -714,6 +724,6 @@ by this release.**
 
 - Application code and configuration contain no SMTP credentials. Keep the populated environment file private and out of version control.
 - Neither API availability nor email delivery implies an item is held for you.
-- No auto-buy or OVH account login is performed.
+- No auto-buy is performed; only manually invoked temporary-cart or payment-readiness checks use OVH account credentials.
 
 The Eco no-offer diagnostic includes only matching-plan field names and nested structure; it never logs full response values.

@@ -21,7 +21,8 @@ from purchase_quota import PurchaseQuota
 def policy() -> guard.PurchasePolicy:
     return guard.PurchasePolicy.from_env({
         "OVH_AUTO_BUY_ENABLED": "false",
-        "OVH_AUTO_BUY_MAX_TOTAL_EUR": "45.00",
+        "OVH_AUTO_BUY_MAX_TOTAL_EUR": "80.00",
+        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
     })
 
 
@@ -79,15 +80,16 @@ class PurchasePreflightTests(unittest.TestCase):
                     )
             cart.assert_called_once()
             payment.assert_called_once()
-            self.assertIn("PREFLIGHT ONLY (NO PURCHASE)", result)
+            self.assertIn("PREFLIGHT PARTIAL (NO PURCHASE; MONTHLY PRICE UNVERIFIED)", result)
             self.assertIn("42.00 EUR", result)
+            self.assertIn("Monthly VAT-inclusive cap 35.00 EUR", result)
             self.assertIn("2/2 local reservation slots remain", result)
             self.assertIn("already on the future checkout approval list", result)
             self.assertIn("recurring monthly cost", result)
             self.assertFalse(journal.path.exists())
             self.assertFalse(quota.path.exists())
 
-    def test_alternative_disk_is_explicitly_not_purchase_approved(self):
+    def test_alternative_disk_is_now_approved_as_purchase_preference(self):
         with tempfile.TemporaryDirectory() as root:
             journal, quota = self.paths(root)
             with patch.object(guard, "verify_available_test_fqn"):
@@ -97,8 +99,8 @@ class PurchasePreflightTests(unittest.TestCase):
                         journal=journal, quota=quota,
                         payment_check=lambda _client: "READ-ONLY: valid",
                     )
-            self.assertIn("REVIEW REQUIRED", result)
-            self.assertIn("NOT authorized for future checkout", result)
+            self.assertIn("already on the future checkout approval list", result)
+            self.assertIn("live checkout remains BLOCKED", result)
             self.assertEqual(quota.read(), [])
 
     def test_price_above_cap_stops_before_payment_and_never_reserves(self):
@@ -106,7 +108,7 @@ class PurchasePreflightTests(unittest.TestCase):
             journal, quota = self.paths(root)
             payment = Mock()
             with patch.object(guard, "verify_available_test_fqn"):
-                with patch.object(guard, "test_order", side_effect=quote_with_total("45.01")):
+                with patch.object(guard, "test_order", side_effect=quote_with_total("80.01")):
                     with self.assertRaisesRegex(guard.PurchaseSafetyError, "PRICE BLOCKED"):
                         pf.preflight(
                             policy(), stocks=[stock()], client=object(),

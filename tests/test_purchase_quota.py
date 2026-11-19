@@ -20,8 +20,7 @@ PRICE = Decimal("39.99")
 
 
 def ledger(directory: str, max_servers: int = 2):
-    # Tests deliberately grant all four eligible disk FQNs; production
-    # defaults to first-choice hybrid disks only until user approval.
+    # All four exact 128GB disk FQNs are now explicitly approved by the owner.
     return quota.PurchaseQuota(
         Path(directory) / "purchases-v2.json",
         approved_fqns=guard.APPROVED_FQNS,
@@ -35,13 +34,12 @@ def confirm_first(q: quota.PurchaseQuota, order_id: int = 12345):
 
 
 class PurchaseQuotaTests(unittest.TestCase):
-    def test_production_default_approves_hybrid_only(self):
-        with tempfile.TemporaryDirectory() as d:
-            real_default = quota.PurchaseQuota(Path(d) / "purchases-v2.json")
-            with self.assertRaisesRegex(guard.PurchaseSafetyError, "not approved"):
-                real_default.reserve(fqn=NVME, datacenter="bhs", total=PRICE)
-            self.assertEqual(real_default.reserve(
-                fqn=HYBRID, datacenter="bhs", total=PRICE), 1)
+    def test_production_default_approves_all_four_exact_128gb_disks(self):
+        for fqn in guard.APPROVED_FQNS:
+            with self.subTest(fqn=fqn), tempfile.TemporaryDirectory() as d:
+                real_default = quota.PurchaseQuota(Path(d) / "purchases-v2.json")
+                self.assertEqual(real_default.reserve(
+                    fqn=fqn, datacenter="bhs", total=PRICE), 1)
 
     def test_two_identical_ks_le_6_fqns_are_allowed(self):
         with tempfile.TemporaryDirectory() as d:
@@ -207,9 +205,11 @@ class PurchaseQuotaTests(unittest.TestCase):
                 with self.assertRaises(guard.PurchaseSafetyError):
                     guard.PurchasePolicy.from_env({
                         "OVH_AUTO_BUY_MAX_TOTAL_EUR": "45.00",
+                        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
                         "OVH_AUTO_BUY_MAX_SERVERS": value,
                     })
 
 
 if __name__ == "__main__":
     unittest.main()
+
