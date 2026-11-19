@@ -18,7 +18,7 @@ import purchase_guard as guard
 ENV = {
     "OVH_AUTO_BUY_ENABLED": "false",
     "OVH_AUTO_BUY_MAX_TOTAL_EUR": "40.00",
-    "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
+    "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "37.00",
     "OVH_AUTO_BUY_ALLOWED_DATACENTERS": "bhs,gra,rbx",
 }
 
@@ -39,22 +39,22 @@ class PurchaseGuardTests(unittest.TestCase):
     def test_purchase_disabled_by_default_even_if_price_configured(self):
         p = guard.PurchasePolicy.from_env({
             "OVH_AUTO_BUY_MAX_TOTAL_EUR": "40.00",
-            "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
+            "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "37.00",
         })
         self.assertFalse(p.enabled)
 
     def test_two_independent_user_approved_price_caps(self):
         p = guard.PurchasePolicy.from_env({
             "OVH_AUTO_BUY_MAX_TOTAL_EUR": "80.00",
-            "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
+            "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "37.00",
         })
         self.assertEqual(p.max_total_eur, Decimal("80.00"))
-        self.assertEqual(p.max_monthly_eur, Decimal("35.00"))
+        self.assertEqual(p.max_monthly_eur, Decimal("37.00"))
 
     def test_monthly_limit_required_and_must_be_positive_eur(self):
         with self.assertRaisesRegex(guard.PurchaseSafetyError, "OVH_AUTO_BUY_MAX_MONTHLY_EUR"):
             guard.PurchasePolicy.from_env({"OVH_AUTO_BUY_MAX_TOTAL_EUR": "80.00"})
-        for amount in ("0", "-1", "abc", "35.001", "501.00", "NaN", "1e2"):
+        for amount in ("0", "-1", "abc", "37.001", "501.00", "NaN", "1e2"):
             with self.subTest(amount=amount):
                 with self.assertRaises(guard.PurchaseSafetyError):
                     guard.PurchasePolicy.from_env({
@@ -78,7 +78,7 @@ class PurchaseGuardTests(unittest.TestCase):
                 with self.assertRaises(guard.PurchaseSafetyError):
                     guard.PurchasePolicy.from_env({
                         "OVH_AUTO_BUY_MAX_TOTAL_EUR": amount,
-                        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
+                        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "37.00",
                     })
 
     def test_duplicate_or_unknown_datacenter_rejected(self):
@@ -87,7 +87,7 @@ class PurchaseGuardTests(unittest.TestCase):
                 with self.assertRaises(guard.PurchaseSafetyError):
                     guard.PurchasePolicy.from_env({
                         "OVH_AUTO_BUY_MAX_TOTAL_EUR": "40",
-                        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
+                        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "37.00",
                         "OVH_AUTO_BUY_ALLOWED_DATACENTERS": choices,
                     })
 

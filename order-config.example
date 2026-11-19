@@ -14,7 +14,7 @@ OVH_AUTO_BUY_ENABLED=false
 OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00
 # Separate owner-approved maximum MONTHLY renewal, VAT included, EUR.
 # This is a CAP, not a verified OVHcloud renewal quote.
-OVH_AUTO_BUY_MAX_MONTHLY_EUR=35.00
+OVH_AUTO_BUY_MAX_MONTHLY_EUR=37.00
 # In order of preference; values outside this list are never considered.
 OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
 # Private, root-owned journal to block later repeated/uncertain purchases.

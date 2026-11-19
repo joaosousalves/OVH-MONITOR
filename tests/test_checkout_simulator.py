@@ -15,7 +15,7 @@ import purchase_guard as guard
 POLICY_ENV = {
     "OVH_AUTO_BUY_ENABLED": "false",
     "OVH_AUTO_BUY_MAX_TOTAL_EUR": "45.00",
-    "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
+    "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "37.00",
     "OVH_AUTO_BUY_ALLOWED_DATACENTERS": "bhs,gra",
 }
 

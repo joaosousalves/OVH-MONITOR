@@ -22,7 +22,7 @@ def policy() -> guard.PurchasePolicy:
     return guard.PurchasePolicy.from_env({
         "OVH_AUTO_BUY_ENABLED": "false",
         "OVH_AUTO_BUY_MAX_TOTAL_EUR": "80.00",
-        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
+        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "37.00",
     })
 
 
@@ -82,7 +82,7 @@ class PurchasePreflightTests(unittest.TestCase):
             payment.assert_called_once()
             self.assertIn("PREFLIGHT PARTIAL (NO PURCHASE; MONTHLY PRICE UNVERIFIED)", result)
             self.assertIn("42.00 EUR", result)
-            self.assertIn("Monthly VAT-inclusive cap 35.00 EUR", result)
+            self.assertIn("Monthly VAT-inclusive cap 37.00 EUR", result)
             self.assertIn("2/2 local reservation slots remain", result)
             self.assertIn("already on the future checkout approval list", result)
             self.assertIn("recurring monthly cost", result)

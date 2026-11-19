@@ -401,12 +401,12 @@ new settings to that protected, root-only file:
 ```ini
 OVH_AUTO_BUY_ENABLED=false
 OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00
-OVH_AUTO_BUY_MAX_MONTHLY_EUR=35.00
+OVH_AUTO_BUY_MAX_MONTHLY_EUR=37.00
 OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
 OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 ```
 
-`80.00` EUR initial (with VAT/setup) and `35.00` EUR monthly (with VAT)
+`80.00` EUR initial (with VAT/setup) and `37.00` EUR monthly (with VAT)
 are the owner's confirmed **per-server maximums**. These separate
 caps are not permission to submit a purchase. The code refuses missing
 or invalid limits and retains a 500 EUR upper-bound safety check.
@@ -497,13 +497,13 @@ The existing `/etc/ovh-ksle-order.env` should retain:
 ```ini
 OVH_AUTO_BUY_ENABLED=false
 OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00
-OVH_AUTO_BUY_MAX_MONTHLY_EUR=35.00
+OVH_AUTO_BUY_MAX_MONTHLY_EUR=37.00
 OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
 OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 ```
 
 `80.00` EUR is the owner-approved first-charge maximum (with VAT),
-separate from the `35.00` EUR VAT-inclusive monthly cap. Neither
+separate from the `37.00` EUR VAT-inclusive monthly cap. Neither
 is consent to buy, and the offline simulator's `39.99` EUR example
 charge **is not an OVHcloud price**. Do not overwrite the API
 credentials file when changing these settings.
@@ -624,7 +624,7 @@ Add or correct these entries in the existing, root-only
 OVH_AUTO_BUY_ENABLED=false
 OVH_AUTO_BUY_MAX_SERVERS=2
 OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00
-OVH_AUTO_BUY_MAX_MONTHLY_EUR=35.00
+OVH_AUTO_BUY_MAX_MONTHLY_EUR=37.00
 OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
 OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 ```
@@ -699,7 +699,7 @@ The order client still blocks those routes. The preflight creates
 **no quota reservations** and never changes existing order records.
 
 `OVH_AUTO_BUY_ENABLED=true` continues to fail closed. The owner has
-approved **80.00 EUR initial with VAT** and **35.00 EUR monthly with VAT**
+approved **80.00 EUR initial with VAT** and **37.00 EUR monthly with VAT**
 per server, and all four prioritized disk choices. However, the
 **actual recurring renewal cost remains UNVERIFIED**: the cap alone
 is not proof the seller's price meets it. Before any live implementation,

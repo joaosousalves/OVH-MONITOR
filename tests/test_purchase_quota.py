@@ -205,7 +205,7 @@ class PurchaseQuotaTests(unittest.TestCase):
                 with self.assertRaises(guard.PurchaseSafetyError):
                     guard.PurchasePolicy.from_env({
                         "OVH_AUTO_BUY_MAX_TOTAL_EUR": "45.00",
-                        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "35.00",
+                        "OVH_AUTO_BUY_MAX_MONTHLY_EUR": "37.00",
                         "OVH_AUTO_BUY_MAX_SERVERS": value,
                     })
 
