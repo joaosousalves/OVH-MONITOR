@@ -82,6 +82,7 @@ class PurchasePolicy:
     enabled: bool
     max_total_eur: Decimal
     datacenters: tuple[str, ...]
+    max_servers: int = 2
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "PurchasePolicy":
@@ -102,6 +103,12 @@ class PurchasePolicy:
             raise PurchaseSafetyError(
                 "Set OVH_AUTO_BUY_MAX_TOTAL_EUR explicitly in /etc/ovh-ksle-order.env"
             )
+        max_servers_raw = env.get("OVH_AUTO_BUY_MAX_SERVERS", "2").strip()
+        if max_servers_raw not in ("1", "2"):
+            raise PurchaseSafetyError(
+                "OVH_AUTO_BUY_MAX_SERVERS must be 1 or 2; a third server is forbidden"
+            )
+        max_servers = int(max_servers_raw)
         limit = parse_eur(raw_limit, label="OVH_AUTO_BUY_MAX_TOTAL_EUR")
         if limit > Decimal("500.00"):
             raise PurchaseSafetyError("Safety ceiling: max allowed initial total is 500.00 EUR")
@@ -111,7 +118,8 @@ class PurchasePolicy:
             raise PurchaseSafetyError("Invalid OVH_AUTO_BUY_ALLOWED_DATACENTERS")
         if len(set(allowed)) != len(allowed):
             raise PurchaseSafetyError("Duplicate datacenter in OVH_AUTO_BUY_ALLOWED_DATACENTERS")
-        return cls(enabled=False, max_total_eur=limit, datacenters=tuple(allowed))
+        return cls(enabled=False, max_total_eur=limit, datacenters=tuple(allowed),
+                   max_servers=max_servers)
 
 
 def choose_candidate(stocks: list[Stock], policy: PurchasePolicy) -> Stock | None:
