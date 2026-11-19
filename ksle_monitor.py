@@ -541,6 +541,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
     group.add_argument("--purchase-preview", action="store_true",
                        help="Phase B: KS-LE-6 preview with EUR price cap, NO checkout or payment")
+    group.add_argument("--purchase-preflight", action="store_true",
+                       help="Phase E: manual quote + payment readiness; NEVER submit checkout or pay")
     group.add_argument("--check-payment-readiness", action="store_true",
                        help="Phase C: GET-only check of default OVHcloud payment method")
     group.add_argument("--simulate-checkout", action="store_true",
@@ -581,6 +583,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.purchase_preview:
             from purchase_guard import run_purchase_preview
             return run_purchase_preview()
+        if args.purchase_preflight:
+            from purchase_preflight import run_purchase_preflight
+            return run_purchase_preflight()
         if args.list_test_stock:
             from order_probe import TEST_PLANS
             plan_code = TEST_PLANS[args.test_plan]
@@ -653,3 +658,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

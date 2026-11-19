@@ -651,6 +651,53 @@ submission has been enabled.** Real-order safeguards still require
 recurring monthly price verification, account-wide order reconciliation,
 purchase-result notification delivery, and explicit user authorization.
 
+## Phase E — manual purchase preflight (still NO checkout)
+
+The optional `--purchase-preflight` command combines the existing
+non-billable checks into **one manual, one-shot review**:
+
+1. Check OVHcloud's live KS-LE-6 stock and select the highest-ranked
+   128 GB disk configuration in Europe/Canada.
+2. Reject legacy order journals, unresolved purchases, or a filled
+   two-server quota before continuing.
+3. Verify the same exact FQN is still available, prepare a **temporary**
+   Eco cart, read `GET /order/cart/{cartId}/checkout`, validate the
+   initial price (EUR including VAT), and delete the temporary cart.
+4. Check the OVHcloud account's default payment method using **GET-only**
+   APIs. No card details or payment identifiers are displayed.
+5. Report the number of local slots remaining. A non-primary disk
+   is marked **REVIEW REQUIRED** until explicitly authorized for
+   future purchasing.
+
+Run it manually using the existing root-only
+`/etc/ovh-ksle-order.env` configuration (if created):
+
+```bash
+cd /opt/ovh-ksle-monitor
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ksle-purchase-preflight \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py --purchase-preflight
+```
+
+**This is not a second scheduled timer or an auto-buyer.** The
+`--once` monitor keeps using only the public stock API and SMTP.
+If stock is unavailable, preflight reports `WAITING` without
+creating a cart or calling account/payment APIs. Quoting available
+stock may create and then delete a temporary cart, but **never**
+submits `POST /order/cart/{cartId}/checkout` or payment requests.
+The order client still blocks those routes. The preflight creates
+**no quota reservations** and never changes existing order records.
+
+`OVH_AUTO_BUY_ENABLED=true` continues to fail closed. A positive
+preflight is **not** permission or a guarantee to buy. Before any
+live purchase implementation, the owner must approve an initial
+charge cap **and** a separately verified VAT-inclusive monthly
+renewal cap, explicitly approve acceptable disk layouts, review
+OVHcloud contract/payment implications and existing account orders,
+and authorize enabling real checkout. **No live order will be made
+by this release.**
+
 ## Troubleshooting
 
 | Symptom | Check |

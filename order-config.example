@@ -40,4 +40,4 @@ OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 # OVH_AUTO_BUY_ALLOWED_DATACENTERS must contain only:
 # bhs (Canada), fra (Germany), gra/rbx/sbg (France), lon (UK), waw (Poland).
 # Alternate disk layouts remain preview-only until explicitly approved.
-# No checkout is implemented or enabled by these settings.
+# Phase E: --purchase-preflight is a MANUAL temporary-cart quote plus\n# GET-only default payment check. It never places an order, reserves a\n# quota slot, or grants checkout/payment scopes.\n# A VAT-inclusive monthly renewal cap has not been approved.\n# No checkout is implemented or enabled by these settings.
