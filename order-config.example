@@ -38,6 +38,6 @@ OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 # 3. 3x1TB NVMe
 # 4. 4x960GB SATA SSD
 # OVH_AUTO_BUY_ALLOWED_DATACENTERS must contain only:
-# bhs (Canada), fra/gra/rbx/sbg (France), lon (UK), waw (Poland).
+# bhs (Canada), fra (Germany), gra/rbx/sbg (France), lon (UK), waw (Poland).
 # Alternate disk layouts remain preview-only until explicitly approved.
 # No checkout is implemented or enabled by these settings.

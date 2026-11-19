@@ -24,7 +24,7 @@ from typing import Mapping, Any
 
 from ksle_monitor import (
     APITransientError, MonitorError, Stock, retrieve_stock, PLAN_CODE,
-    PREFERRED_STORAGE,
+    PREFERRED_STORAGE, REQUIRED_MEMORY, ALLOWED_DATACENTERS,
 )
 from order_probe import (
     OrderProbeError, OVHCartClient, test_order, verify_available_test_fqn,
@@ -34,7 +34,7 @@ LOG = logging.getLogger("ksle-purchase-preview")
 # These four KS-LE-6 layouts have 128 GB RAM; order is purchase priority.
 # The default primary preference is unchanged and all alternatives are
 # preview candidates ONLY until a separate live checkout is approved.
-RAM_CODE = "ram-128g-ddr4-ecc-2400"
+RAM_CODE = REQUIRED_MEMORY
 STORAGE_PRIORITIES = (
     "hybridsoftraid-2x4000sa-2x500nvme",  # 2 x 512 GB NVMe + 2 x 4 TB HDD
     "softraid-2x1920nvme",                # 2 x 1.92 TB NVMe
@@ -44,8 +44,8 @@ STORAGE_PRIORITIES = (
 APPROVED_FQNS = tuple(f"{PLAN_CODE}.{RAM_CODE}.{storage}"
                       for storage in STORAGE_PRIORITIES)
 EXPECTED_FQN = APPROVED_FQNS[0]  # Backward-compatible original preference.
-# BHS Canada; FRA/GRA/RBX/SBG France; LON UK; WAW Poland.
-DATACENTERS = ("bhs", "fra", "gra", "lon", "rbx", "sbg", "waw")
+# BHS Canada; FRA Germany; GRA/RBX/SBG France; LON UK; WAW Poland.
+DATACENTERS = ALLOWED_DATACENTERS
 DEFAULT_JOURNAL = "/var/lib/ovh-ksle-purchase/intent.json"
 EUR = Decimal("0.01")
 
@@ -404,7 +404,7 @@ def render_disk_preferences(stocks: list[Stock]) -> str:
     }
     lines = [
         "KS-LE-6 / 128 GB RAM: disk preferences, highest priority first",
-        "Allowed countries: Canada (BHS), France, UK, Poland (European datacenters)",
+        "Allowed countries: Canada (BHS), Germany (FRA), France (GRA/RBX/SBG), UK (LON), Poland (WAW)",
         "Two KS-LE-6 servers maximum, same or different disks; checkout disabled.",
     ]
     for number, storage in enumerate(STORAGE_PRIORITIES, 1):

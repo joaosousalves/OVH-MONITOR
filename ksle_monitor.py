@@ -38,6 +38,10 @@ STORAGE_NAMES = {
     "softraid-3x1000nvme": "3 x 1 TB NVMe",
     "softraid-4x960ssd": "4 x 960 GB SATA SSD",
 }
+# Only these 128 GB KS-LE-6 configurations in Europe or Canada are alert targets.
+REQUIRED_MEMORY = "ram-128g-ddr4-ecc-2400"
+# BHS Canada; FRA Germany (Limburg); GRA/RBX/SBG France; LON UK; WAW Poland.
+ALLOWED_DATACENTERS = ("bhs", "fra", "gra", "lon", "rbx", "sbg", "waw")
 
 # Official feed currently returns 1H-high, 1H-low, 72H, etc. Any H status
 # indicates a provisioning lead time, not an inventory count. Other statuses
@@ -97,6 +101,20 @@ class Stock:
     @property
     def storage_label(self) -> str:
         return STORAGE_NAMES.get(self.storage, self.storage)
+
+
+def eligible_alert_stock(stock: Stock) -> bool:
+    """Require exact KS-LE-6 model, 128 GB RAM, known disks and EU/CA site."""
+    return (
+        stock.storage in STORAGE_NAMES
+        and stock.fqn == f"{PLAN_CODE}.{REQUIRED_MEMORY}.{stock.storage}"
+        and stock.datacenter in ALLOWED_DATACENTERS
+    )
+
+
+def monitored_stocks(stocks: list[Stock]) -> list[Stock]:
+    """Apply alert policy before computing notifications and persistent state."""
+    return [stock for stock in stocks if eligible_alert_stock(stock)]
 
 
 @dataclass(frozen=True)
@@ -465,6 +483,7 @@ def alert_html(stocks: list[Stock], *, test: bool = False, prices: dict[str, str
 
 
 def run_once(stocks: list[Stock], path: Path, config: MailConfig | None, dry_run: bool, prices: dict[str, str] | None = None) -> int:
+    stocks = monitored_stocks(stocks)
     previous = load_alerted(path)
     new, retained = transition(stocks, previous)
     currently_available = sum(stock.available for stock in stocks)
@@ -622,7 +641,7 @@ def main(argv: list[str] | None = None) -> int:
         # A failed price lookup must never suppress or delay the stock email.
         prices = None
         if not args.check and config is not None:
-            pending, _ = transition(stocks, load_alerted(state_path()))
+            pending, _ = transition(monitored_stocks(stocks), load_alerted(state_path()))
             if pending:
                 from pricing import cached_prices
                 prices = cached_prices(state_path().with_name("pricing-cache.json"))

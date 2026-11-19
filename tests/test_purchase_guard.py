@@ -142,6 +142,8 @@ class PurchaseGuardTests(unittest.TestCase):
         self.assertIn("3. 3 x 1 TB NVMe", report)
         self.assertIn("4. 4 x 960 GB SATA SSD", report)
         self.assertIn("FRA  1H-high", report)
+        self.assertIn("Germany (FRA)", report)
+        self.assertEqual(guard.DATACENTERS, monitor.ALLOWED_DATACENTERS)
         self.assertNotIn("SYD", report)
 
     def test_purchase_preview_checks_global_slots_before_cart(self):

@@ -104,6 +104,45 @@ class MonitorTests(unittest.TestCase):
         self.assertFalse(new)
         self.assertEqual(current, {key})
 
+    def test_alert_filter_requires_exact_model_ram_disks_and_region(self):
+        valid = [
+            monitor.Stock(PREFERRED, monitor.PREFERRED_STORAGE, "bhs", "1H-high"),
+            monitor.Stock(OTHER, "softraid-2x1920nvme", "fra", "72H"),
+        ]
+        excluded = [
+            monitor.Stock(PREFERRED.replace("128g", "64g"), monitor.PREFERRED_STORAGE, "bhs", "1H-high"),
+            monitor.Stock(PREFERRED, monitor.PREFERRED_STORAGE, "vin", "1H-high"),
+            monitor.Stock(OTHER, monitor.PREFERRED_STORAGE, "bhs", "1H-high"),
+            monitor.Stock(monitor.PLAN_CODE + ".ram-128g-ddr4-ecc-2400.other-disks",
+                          "other-disks", "gra", "1H-high"),
+            monitor.Stock(PREFERRED.replace(monitor.PLAN_CODE, "other-plan"),
+                          monitor.PREFERRED_STORAGE, "gra", "1H-high"),
+        ]
+        self.assertEqual(monitor.monitored_stocks(excluded + valid), valid)
+        self.assertEqual(monitor.ALLOWED_DATACENTERS,
+                         ("bhs", "fra", "gra", "lon", "rbx", "sbg", "waw"))
+
+    def test_alerts_ignore_noneligible_options_and_persist_only_eligible(self):
+        allowed = monitor.Stock(PREFERRED, monitor.PREFERRED_STORAGE, "bhs", "1H-high")
+        excluded = monitor.Stock(PREFERRED, monitor.PREFERRED_STORAGE, "vin", "1H-high")
+        wrong_ram = monitor.Stock(PREFERRED.replace("128g", "64g"),
+                                  monitor.PREFERRED_STORAGE, "gra", "1H-high")
+        dummy = monitor.MailConfig("smtp", 587, "starttls", "", "",
+                                   "sender@example.com", ("to@example.com",))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            with patch.object(monitor, "send_mail") as send:
+                monitor.run_once([excluded, wrong_ram], path, dummy, dry_run=False)
+                send.assert_not_called()
+                self.assertFalse(path.exists())
+                monitor.run_once([excluded, allowed, wrong_ram], path, dummy, dry_run=False)
+                monitor.run_once([excluded, allowed, wrong_ram], path, dummy, dry_run=False)
+                send.assert_called_once()
+                self.assertIn("Datacenter: BHS", send.call_args.args[2])
+                self.assertNotIn("Datacenter: VIN", send.call_args.args[2])
+                self.assertNotIn("Datacenter: GRA", send.call_args.args[2])
+                self.assertEqual(monitor.load_alerted(path), {allowed.key})
+
     def test_state_persists_across_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "state.json"

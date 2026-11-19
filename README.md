@@ -571,9 +571,9 @@ worker's approved list. Exact hardware is validated against
 `27skle06-v1.ram-128g-ddr4-ecc-2400.<storage>`. A fake/mismatched RAM or
 storage code is not eligible.
 
-Accepted datacenter codes only: `bhs` (Canada); `fra`, `gra`,
-`rbx`, `sbg` (France); `lon` (UK); `waw` (Poland). These
-are Europe or Canada only. Datacenter priority is evaluated after disk
+Accepted datacenter codes only: `bhs` (Canada); `fra` (Germany,
+Limburg); `gra`, `rbx`, `sbg` (France); `lon` (UK); `waw` (Poland).
+These are Europe or Canada only. Datacenter priority is evaluated after disk
 priority. The user can revise the disk order before checkout goes live.
 
 ### Inspect KS-LE-6 configurations and location availability
@@ -641,8 +641,11 @@ purchase of an alternate disk layout. It refuses a cart when both
 reservation slots are used or an earlier order is unresolved.
 The preview itself creates no reservation or billable order.
 
-The previous email monitor still checks all KS-LE-6 storage options
-every 30 seconds. It does not load purchase credentials.
+The email monitor checks only the four recognized KS-LE-6 disk layouts
+with exactly 128 GB RAM in the approved Europe/Canada datacenters
+every 30 seconds. Manual `--list` still displays the raw OVHcloud feed,
+including non-eligible configurations and sites. The monitor does not
+load purchase credentials.
 **No live POST checkout, automated buying systemd worker, or payment
 submission has been enabled.** Real-order safeguards still require
 recurring monthly price verification, account-wide order reconciliation,
