@@ -31,10 +31,20 @@ from order_probe import (
 )
 
 LOG = logging.getLogger("ksle-purchase-preview")
-EXPECTED_FQN = (
-    "27skle06-v1.ram-128g-ddr4-ecc-2400."
-    "hybridsoftraid-2x4000sa-2x500nvme"
+# These four KS-LE-6 layouts have 128 GB RAM; order is purchase priority.
+# The default primary preference is unchanged and all alternatives are
+# preview candidates ONLY until a separate live checkout is approved.
+RAM_CODE = "ram-128g-ddr4-ecc-2400"
+STORAGE_PRIORITIES = (
+    "hybridsoftraid-2x4000sa-2x500nvme",  # 2 x 512 GB NVMe + 2 x 4 TB HDD
+    "softraid-2x1920nvme",                # 2 x 1.92 TB NVMe
+    "softraid-3x1000nvme",                # 3 x 1 TB NVMe
+    "softraid-4x960ssd",                  # 4 x 960 GB SATA SSD
 )
+APPROVED_FQNS = tuple(f"{PLAN_CODE}.{RAM_CODE}.{storage}"
+                      for storage in STORAGE_PRIORITIES)
+EXPECTED_FQN = APPROVED_FQNS[0]  # Backward-compatible original preference.
+# BHS Canada; FRA/GRA/RBX/SBG France; LON UK; WAW Poland.
 DATACENTERS = ("bhs", "fra", "gra", "lon", "rbx", "sbg", "waw")
 DEFAULT_JOURNAL = "/var/lib/ovh-ksle-purchase/intent.json"
 EUR = Decimal("0.01")
@@ -123,15 +133,28 @@ class PurchasePolicy:
 
 
 def choose_candidate(stocks: list[Stock], policy: PurchasePolicy) -> Stock | None:
-    """Only the requested KS-LE-6 RAM+disks, in an allowed datacenter."""
-    candidates = [s for s in stocks
-                  if s.fqn == EXPECTED_FQN
-                  and s.storage == PREFERRED_STORAGE
-                  and s.available
-                  and s.datacenter in policy.datacenters]
+    """Rank ONLY KS-LE-6 128GB variants; disk priority before datacenter.
+
+    The stock feed's FQN and separate storage field must both agree.
+    Unrecognized hardware, datacenters and availability codes never qualify.
+    """
+    candidates = [
+        stock for stock in stocks
+        if stock.fqn in APPROVED_FQNS
+        and stock.storage in STORAGE_PRIORITIES
+        and stock.fqn == f"{PLAN_CODE}.{RAM_CODE}.{stock.storage}"
+        and stock.available
+        and stock.datacenter in policy.datacenters
+    ]
     if not candidates:
         return None
-    return min(candidates, key=lambda s: policy.datacenters.index(s.datacenter))
+    return min(
+        candidates,
+        key=lambda stock: (
+            STORAGE_PRIORITIES.index(stock.storage),
+            policy.datacenters.index(stock.datacenter),
+        ),
+    )
 
 
 class OrderJournal:
@@ -309,7 +332,7 @@ def preview(policy: PurchasePolicy, *, stocks: list[Stock],
         raise PurchaseSafetyError("Stock feed returned no rows")
     choice = choose_candidate(stocks, policy)
     if choice is None:
-        return "WAITING: preferred KS-LE-6 configuration not currently available. No cart created."
+        return "WAITING: no eligible KS-LE-6 128 GB disk configuration in approved EU/CA datacenters. No cart created."
     if client is None:
         raise PurchaseSafetyError("Authenticated cart credentials required to quote available stock")
     verify_available_test_fqn(PLAN_CODE, choice.fqn, choice.datacenter)
