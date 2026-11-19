@@ -355,6 +355,82 @@ No new API permissions are needed. Without `--test-plan`, the command still
 tests KS-LE-6 preferred disks; the 30-second systemd monitor **always** remains
 on KS-LE-6.
 
+## Phase B — disabled KS-LE-6 purchase preview (no real checkout)
+
+**Status: purchase preparations only.** The current program **cannot submit
+a real order**, even if somebody changes `OVH_AUTO_BUY_ENABLED=true`. The
+OVHcart API client has an explicit endpoint allowlist that excludes
+`POST /order/cart/{cartId}/checkout` and all payment endpoints. The enabled
+setting deliberately fails closed instead of buying.
+
+The separate manual `--purchase-preview` command:
+
+1. Checks the public stock feed for **only**
+   `27skle06-v1.ram-128g-ddr4-ecc-2400.hybridsoftraid-2x4000sa-2x500nvme`.
+2. Restricts candidates to the explicitly allowed datacenters.
+3. If that exact configuration is not available, exits with `WAITING`
+   without creating an authenticated cart or touching purchase history.
+4. If available, rechecks the exact hardware/datacenter stock, prepares a
+   temporary monthly `P1M/default` OVHcloud cart and obtains a **GET
+   checkout** quote without placing an order.
+5. Checks the checkout's structured `prices.withTax.value` amount and
+   requires `currencyCode=EUR` and a value not exceeding
+   `OVH_AUTO_BUY_MAX_TOTAL_EUR`. This cap is for the *initial payment
+   including VAT and setup fees*, **not a separately verified recurring
+   monthly renewal amount**. Missing or ambiguous data blocks the preview.
+6. Deletes the temporary cart even after a price-policy failure and
+   reports `PREVIEW ONLY` if all checks pass.
+
+A future ordering implementation can call `OrderJournal.reserve_once()`
+before any billable operation to guarantee an exclusive persistent
+one-purchase reservation, refusing retries if an attempt was made or its
+outcome is uncertain. The preview reads that journal but **never reserves
+anything**, so dry runs cannot silently consume the purchase allowance.
+**No live checkout, payment-readiness check, order reconciliation, or
+order-result email has been enabled yet.**
+
+### Configure the preview
+
+The current `/etc/ovh-ksle-order.env` already holds your API credentials.
+**Do not overwrite it** with `order-config.example`. Instead append these
+new settings to that protected, root-only file:
+
+```ini
+OVH_AUTO_BUY_ENABLED=false
+OVH_AUTO_BUY_MAX_TOTAL_EUR=45.00
+OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
+OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
+```
+
+`45.00` is merely an example cap and is **not purchasing consent**. Set
+your own upper limit before a live quote. There is also a hard-coded
+500 EUR upper bound to reduce accidental configuration mistakes; the
+future purchasing release should have a much lower, user-approved limit.
+The datacenter ordering represents preference only, not guaranteed stock.
+
+```bash
+sudo nano /etc/ovh-ksle-order.env
+sudo chown root:root /etc/ovh-ksle-order.env
+sudo chmod 600 /etc/ovh-ksle-order.env
+
+cd /opt/ovh-ksle-monitor
+python3 -m unittest discover -s tests -v
+
+sudo systemd-run --wait --pipe --collect \
+  --property=EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py --purchase-preview
+```
+
+When stock is unavailable, the preview outputs `WAITING`. When the
+preferred option is in stock and the quote meets the price cap, the
+output starts `PREVIEW ONLY`. No automated spending, emails, or new
+persistent order attempts are performed by this command.
+
+The existing `ovh-ksle-monitor.service` and timer still run the plain
+`--once` monitor every 30 seconds with the separate
+`/etc/ovh-ksle-monitor.env`. They do not load any ordering credentials
+or invoke `--purchase-preview`.
+
 ## Troubleshooting
 
 | Symptom | Check |
