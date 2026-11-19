@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 import logging
+import os
 from pathlib import Path
 import tempfile
 from typing import Any
 
 from purchase_guard import (
-    OrderJournal, PurchasePolicy, PurchaseSafetyError, EXPECTED_FQN,
+    OrderJournal, PurchasePolicy, PurchaseSafetyError, EXPECTED_FQN,\n    DEFAULT_JOURNAL, make_api_client,
 )
 from order_probe import OVHCartClient, OrderProbeError
 
@@ -158,4 +159,24 @@ def run_checkout_simulation(scenario: str = "accepted") -> int:
         return 0
     except (SimulationError, PurchaseSafetyError) as exc:
         LOG.error("Checkout simulation blocked; no order submitted: %s", exc)
+        return 1
+
+
+def run_order_reconciliation() -> int:
+    """Read-only command for reviewing a recorded order, never unlocking it."""
+    try:
+        journal = OrderJournal(Path(os.getenv("OVH_AUTO_BUY_JOURNAL", DEFAULT_JOURNAL)))
+        record = journal.read()
+        if record is None:
+            print("No purchase journal exists; no order reconciliation is required.")
+            return 0
+        if not isinstance(record.get("orderId"), int):
+            print("UNCERTAIN: journal has no order ID. Manual OVHcloud account "
+                  "review required; retry blocked.")
+            return 1
+        client = make_api_client()
+        print(read_only_order_status(client, journal))
+        return 0
+    except (SimulationError, PurchaseSafetyError, OrderProbeError) as exc:
+        LOG.error("Read-only order status check failed; no order submitted: %s", exc)
         return 1
