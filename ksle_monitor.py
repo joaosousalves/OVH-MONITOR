@@ -512,6 +512,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="Read-only stock check for --test-plan (KS-LE-1 or KS-LE-6)")
     group.add_argument("--list-eco-options", action="store_true",
                        help="Read-only live stock for KS-LE-1 to KS-LE-6; no credentials")
+    group.add_argument("--purchase-quota-status", action="store_true",
+                       help="Read-only local 0/2 lifetime purchase attempt ledger")
     group.add_argument("--list-prices", action="store_true", help="Show cached public monthly catalog estimates (no cart)")
     group.add_argument("--diagnose-prices", action="store_true", help="Inspect KS-LE-6 public catalog price structure without credentials")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
@@ -537,6 +539,9 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        if args.purchase_quota_status:
+            from purchase_quota import run_quota_status
+            return run_quota_status()
         if args.list_eco_options:
             from eco_discovery import run_list_eco_options
             return run_list_eco_options()
