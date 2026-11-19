@@ -1,116 +1,129 @@
-"""Two-server global purchase quota. NO live checkout transport.
+"""Global two-server KS-LE-6 quota: identical or different disks, Europe/Canada.
 
-Future purchase workers must use a SINGLE shared ledger path for every
-candidate plan and reserve before any potentially billable API call.
-A reservation, uncertain outcome or returned order ID is never automatically
-released. No live CLI calls reserve here. Current preferred allowlist contains
-KS-LE-6 only; a second distinct model must be explicitly approved later.
+No live checkout transport exists in this application. A future single-host
+purchaser must atomically reserve one of TWO global slots before any billable
+request. The slots cannot be reset automatically. A timeout/uncertain order
+blocks the second attempt until manually reconciled. Any legacy ledger must
+be manually reconciled; never silently migrate or discard it.
 """
 from __future__ import annotations
 
-from decimal import Decimal
 from datetime import datetime, timezone
+from decimal import Decimal
 import fcntl
 import json
 import os
 from pathlib import Path
-import re
 import stat
 import tempfile
 
-from purchase_guard import EXPECTED_FQN, PurchaseSafetyError
+from purchase_guard import (
+    APPROVED_FQNS, DATACENTERS, PLAN_CODE, PurchaseSafetyError, parse_eur,
+)
 
 GLOBAL_LIMIT = 2
-DEFAULT_PATH = "/var/lib/ovh-ksle-purchase/purchases-v1.json"
-ALLOWED_DATACENTERS = {"bhs", "fra", "gra", "lon", "rbx", "sbg", "waw"}
-KNOWN_PLANS = {f"27skle0{i}-v1" for i in range(1, 7)}
-OPEN_STATES = {"reserved", "submitted", "unknown"}
-ALL_STATES = OPEN_STATES | {"confirmed"}
+SCHEMA = 2
+DEFAULT_PATH = "/var/lib/ovh-ksle-purchase/purchases-v2.json"
+OPEN_STATES = frozenset(("reserved", "submitted", "unknown"))
+STATES = OPEN_STATES | {"confirmed"}
 
 
-def plan_from_fqn(fqn: str) -> str:
-    if not isinstance(fqn, str) or len(fqn) > 240:
-        raise PurchaseSafetyError("Invalid approved server FQN")
-    parts = fqn.split(".")
-    if (len(parts) != 3 or parts[0] not in KNOWN_PLANS
-            or not parts[1].startswith("ram-")
-            or not all(re.fullmatch(r"[a-z0-9-]+", p) for p in parts[1:])):
-        raise PurchaseSafetyError("Server FQN is not a recognized KS-LE configuration")
-    return parts[0]
+def _valid_fqn(fqn: str) -> bool:
+    return isinstance(fqn, str) and fqn in APPROVED_FQNS
 
 
 class PurchaseQuota:
-    """Atomic single-host reservation ledger, at most two distinct KS-LE plans.
+    """Atomic, persistent global quota, allowing repeated FQN and plan.
 
-    A worker MAY submit a single checkout only after obtaining a reservation.
-    The worker must never retry automatically when outcome is not confirmed.
-    A shared filesystem across multiple hosts requires distributed locking
-    instead; don't run more than one purchaser host with this implementation.
+    Multiple purchasing hosts must NOT use this local filesystem lock.
+    The caller receives an integer slot 1 or 2 (not a plan identifier).
+    No live checkout method is provided here.
     """
-
-    def __init__(self, path: Path, approved_fqns: tuple[str, ...] = (EXPECTED_FQN,),
+    def __init__(self, path: Path, approved_fqns: tuple[str, ...] = APPROVED_FQNS,
                  max_servers: int = GLOBAL_LIMIT):
-        if type(max_servers) is not int or not 1 <= max_servers <= GLOBAL_LIMIT:
-            raise PurchaseSafetyError("Maximum server purchases must be 1 or 2")
-        if (not approved_fqns or len(approved_fqns) > GLOBAL_LIMIT
-                or approved_fqns[0] != EXPECTED_FQN):
-            raise PurchaseSafetyError("KS-LE-6 must be primary; one secondary model may be approved")
-        plans = [plan_from_fqn(fqn) for fqn in approved_fqns]
-        if len(plans) != len(set(plans)):
-            raise PurchaseSafetyError("Only one server per distinct plan is allowed")
+        if type(max_servers) is not int or max_servers not in (1, 2):
+            raise PurchaseSafetyError("Global max server count must be 1 or 2")
+        if (not isinstance(approved_fqns, tuple) or not approved_fqns
+                or len(set(approved_fqns)) != len(approved_fqns)
+                or any(not _valid_fqn(f) for f in approved_fqns)):
+            raise PurchaseSafetyError("Only explicitly approved KS-LE-6 128GB disk FQNs permitted")
         self.path = Path(path)
         self.approved = frozenset(approved_fqns)
         self.max_servers = max_servers
 
+    def _check_legacy(self) -> None:
+        """Never ignore existing entries from an older ledger."""
+        for legacy_name in ("intent.json", "purchases-v1.json"):
+            path = self.path.with_name(legacy_name)
+            if path != self.path and (path.exists() or path.is_symlink()):
+                raise PurchaseSafetyError(
+                    f"Existing {legacy_name} requires reconciliation before new reservations"
+                )
+
     def read(self) -> list[dict]:
         if self.path.is_symlink():
-            raise PurchaseSafetyError("Quota ledger may not be a symlink")
+            raise PurchaseSafetyError("Purchase quota journal symlink forbidden")
         try:
             info = self.path.stat()
         except FileNotFoundError:
             return []
         except OSError as exc:
-            raise PurchaseSafetyError("Cannot inspect quota ledger") from exc
+            raise PurchaseSafetyError("Cannot inspect purchase quota journal") from exc
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
-            raise PurchaseSafetyError("Quota ledger must be a private regular file (0600)")
+            raise PurchaseSafetyError("Purchase quota journal must be a 0600 regular file")
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (ValueError, OSError) as exc:
-            raise PurchaseSafetyError("Corrupt quota ledger: refusing new purchase") from exc
-        if not isinstance(data, dict) or data.get("schema") != 1:
-            raise PurchaseSafetyError("Unrecognized quota ledger schema")
-        attempts = data.get("attempts")
-        if not isinstance(attempts, list) or len(attempts) > GLOBAL_LIMIT:
-            raise PurchaseSafetyError("Invalid quota ledger entry count")
-        plans: set[str] = set()
-        for attempt in attempts:
-            if not isinstance(attempt, dict):
-                raise PurchaseSafetyError("Invalid purchase attempt")
-            plan = plan_from_fqn(attempt.get("fqn"))
-            if (plan != attempt.get("planCode") or plan in plans
-                    or attempt.get("status") not in ALL_STATES
-                    or attempt.get("datacenter") not in ALLOWED_DATACENTERS):
-                raise PurchaseSafetyError("Invalid or duplicated quota record")
-            plans.add(plan)
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise PurchaseSafetyError("Corrupted purchase quota journal; further orders blocked") from exc
+        if (not isinstance(payload, dict) or payload.get("schema") != SCHEMA
+                or not isinstance(payload.get("attempts"), list)
+                or len(payload["attempts"]) > GLOBAL_LIMIT):
+            raise PurchaseSafetyError("Unrecognized purchase quota schema or record count")
+        attempts = payload["attempts"]
+        slots: set[int] = set()
+        for item in attempts:
+            if not isinstance(item, dict):
+                raise PurchaseSafetyError("Invalid purchase quota entry")
+            slot = item.get("slot")
+            amount = item.get("totalEur")
+            if (type(slot) is not int or slot not in (1, 2) or slot in slots
+                    or item.get("planCode") != PLAN_CODE
+                    or not _valid_fqn(item.get("fqn"))
+                    or item.get("datacenter") not in DATACENTERS
+                    or item.get("status") not in STATES):
+                raise PurchaseSafetyError("Invalid or duplicated purchase slot")
+            try:
+                parse_eur(amount, label="recorded initial charge")
+            except PurchaseSafetyError as exc:
+                raise PurchaseSafetyError("Invalid purchase quota initial charge") from exc
+            if item["status"] in ("submitted", "confirmed"):
+                if type(item.get("orderId")) is not int or not 0 < item["orderId"] < 10**15:
+                    raise PurchaseSafetyError("Submitted record requires known order ID")
+            elif "orderId" in item:
+                raise PurchaseSafetyError("Unsubmitted or uncertain record has unexpected order ID")
+            slots.add(slot)
+        if sorted(slots) != list(range(1, len(attempts) + 1)):
+            raise PurchaseSafetyError("Nonconsecutive purchase slots; refusing further purchases")
         return attempts
 
-    def _write(self, records: list[dict]) -> None:
+    def _write(self, attempts: list[dict]) -> None:
         tmp = None
         try:
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=self.path.parent,
-                                             prefix=".quota-", delete=False) as handle:
-                tmp = Path(handle.name)
-                os.fchmod(handle.fileno(), 0o600)
-                json.dump({"schema": 1, "attempts": records}, handle, sort_keys=True)
-                handle.flush()
-                os.fsync(handle.fileno())
+            with tempfile.NamedTemporaryFile("w", dir=self.path.parent,
+                                             encoding="utf-8", prefix=".quota-",
+                                             delete=False) as file:
+                tmp = Path(file.name)
+                os.fchmod(file.fileno(), 0o600)
+                json.dump({"schema": SCHEMA, "attempts": attempts}, file, sort_keys=True)
+                file.flush()
+                os.fsync(file.fileno())
             os.replace(tmp, self.path)
             tmp = None
-            directory_fd = os.open(str(self.path.parent), os.O_RDONLY)
+            dirfd = os.open(str(self.path.parent), os.O_RDONLY)
             try:
-                os.fsync(directory_fd)
+                os.fsync(dirfd)
             finally:
-                os.close(directory_fd)
+                os.close(dirfd)
         finally:
             if tmp is not None:
                 try:
@@ -118,113 +131,122 @@ class PurchaseQuota:
                 except OSError:
                     pass
 
-    def _with_lock(self, change):
+    def _locked(self, callback):
         directory = self.path.parent
         if directory.is_symlink():
-            raise PurchaseSafetyError("Quota directory may not be a symlink")
+            raise PurchaseSafetyError("Purchase quota directory symlink forbidden")
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         if directory.stat().st_mode & 0o022:
-            raise PurchaseSafetyError("Quota directory must not be writable by group/others")
-        lock_path = directory / ".purchases-v1.lock"
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR |
-                     getattr(os, "O_NOFOLLOW", 0), 0o600)
+            raise PurchaseSafetyError("Purchase quota directory permissions unsafe")
+        fd = os.open(str(directory / ".purchases-v2.lock"),
+                     os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
-                raise PurchaseSafetyError("Unsafe quota lock")
+                raise PurchaseSafetyError("Unsafe purchase quota lock file")
             fcntl.flock(fd, fcntl.LOCK_EX)
-            records = self.read()
-            return change(records)
+            self._check_legacy()
+            return callback(self.read())
         finally:
             os.close(fd)
 
-    def reserve(self, *, fqn: str, datacenter: str, total: Decimal) -> bool:
-        if fqn not in self.approved:
-            raise PurchaseSafetyError("Server FQN is not explicitly approved for purchasing")
-        if datacenter not in ALLOWED_DATACENTERS:
-            raise PurchaseSafetyError("Invalid datacenter")
-        if not isinstance(total, Decimal) or not total.is_finite() or total <= 0:
-            raise PurchaseSafetyError("Invalid initial EUR charge")
-        plan = plan_from_fqn(fqn)
+    def reserve(self, *, fqn: str, datacenter: str, total: Decimal) -> int | None:
+        """Reserve one of two global slots; return slot number or None if full.
 
-        def apply(records):
-            # Legacy one-purchase journal must be reconciled before migration;
-            # never silently ignore historic or ambiguous order attempts.
-            legacy_path = self.path.with_name("intent.json")
-            if legacy_path.exists() or legacy_path.is_symlink():
-                raise PurchaseSafetyError("Legacy order journal requires manual migration")
-            if len(records) >= self.max_servers or any(
-                    item["planCode"] == plan for item in records):
-                return False
-            if any(item["status"] in OPEN_STATES for item in records):
-                raise PurchaseSafetyError("Previous order outcome requires reconciliation")
-            records.append({
-                "planCode": plan, "fqn": fqn, "datacenter": datacenter,
-                "totalEur": str(total), "status": "reserved",
+        A second identical KS-LE-6 configuration is allowed after the
+        first order is confirmed. NEVER release a reserved slot on timeouts.
+        """
+        if not _valid_fqn(fqn) or fqn not in self.approved:
+            raise PurchaseSafetyError("KS-LE-6 128GB disk FQN is not approved")
+        if datacenter not in DATACENTERS:
+            raise PurchaseSafetyError("Only allowed Europe/Canada datacenters may be ordered")
+        if not isinstance(total, Decimal) or not total.is_finite() or total <= 0:
+            raise PurchaseSafetyError("Initial EUR total must be a positive Decimal")
+        total = parse_eur(total, label="initial EUR total")
+
+        def apply(attempts: list[dict]) -> int | None:
+            if len(attempts) >= self.max_servers:
+                return None
+            if any(item["status"] in OPEN_STATES for item in attempts):
+                raise PurchaseSafetyError(
+                    "Previous purchase is unresolved; cannot reserve another server"
+                )
+            slot = len(attempts) + 1
+            attempts.append({
+                "slot": slot,
+                "planCode": PLAN_CODE,
+                "fqn": fqn,
+                "datacenter": datacenter,
+                "totalEur": str(total),
+                "status": "reserved",
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             })
-            self._write(records)
-            return True
+            self._write(attempts)
+            return slot
 
-        return self._with_lock(apply)
+        return self._locked(apply)
 
-    def update_outcome(self, *, plan_code: str, status: str,
+    def update_outcome(self, *, slot: int, status: str,
                        order_id: int | None = None) -> None:
-        """Test-ready transitions. Confirmed requires a known order ID.
+        """Only reserved->submitted/unknown, submitted->confirmed.
 
-        Automated outcome reconciliation cannot confirm payment from a status
-        string alone. A future operator-verified workflow must drive confirmed.
+        'confirmed' requires external human verification: an order ID by
+        itself is not evidence of payment or provisioning.
         """
+        if type(slot) is not int or slot not in (1, 2):
+            raise PurchaseSafetyError("Invalid purchase slot")
         if status not in ("submitted", "unknown", "confirmed"):
-            raise PurchaseSafetyError("Unsupported quota outcome")
-        if status in ("submitted", "confirmed") and (
-                type(order_id) is not int or not 0 < order_id < 10**15):
-            raise PurchaseSafetyError("Submitted/confirmed outcome requires numeric order ID")
-        if status == "unknown" and order_id is not None:
-            raise PurchaseSafetyError("Unknown outcome cannot have an order ID")
+            raise PurchaseSafetyError("Invalid purchase outcome")
+        if status in ("submitted", "confirmed"):
+            if type(order_id) is not int or not 0 < order_id < 10**15:
+                raise PurchaseSafetyError("Verified numeric order ID required")
+        elif order_id is not None:
+            raise PurchaseSafetyError("Unknown outcome cannot include an order ID")
 
-        def apply(records):
-            found = [x for x in records if x["planCode"] == plan_code]
-            if len(found) != 1:
-                raise PurchaseSafetyError("No reserved quota record for selected plan")
-            item = found[0]
-            old = item["status"]
-            if ((old == "reserved" and status not in ("submitted", "unknown"))
-                    or (old == "submitted" and status != "confirmed")
-                    or old in ("unknown", "confirmed")):
-                raise PurchaseSafetyError("Unsafe purchase quota state transition")
-            if status == "confirmed" and item.get("orderId") != order_id:
-                raise PurchaseSafetyError("Confirmed order ID must match recorded submission")
-            item["status"] = status
-            item["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        def apply(attempts: list[dict]) -> None:
+            match = [record for record in attempts if record["slot"] == slot]
+            if len(match) != 1:
+                raise PurchaseSafetyError("Purchase slot not found")
+            record = match[0]
+            previous = record["status"]
+            if (previous == "reserved" and status not in ("submitted", "unknown")) or (
+                previous == "submitted" and status != "confirmed"
+            ) or previous in ("unknown", "confirmed"):
+                raise PurchaseSafetyError("Unsafe purchase outcome transition")
+            if status == "confirmed" and record.get("orderId") != order_id:
+                raise PurchaseSafetyError("Order ID differs from existing submitted order")
+            record["status"] = status
+            record["updatedAt"] = datetime.now(timezone.utc).isoformat()
             if order_id is not None:
-                item["orderId"] = order_id
-            self._write(records)
+                record["orderId"] = order_id
+            self._write(attempts)
 
-        self._with_lock(apply)
+        self._locked(apply)
 
 
 def run_quota_status() -> int:
-    """Read-only local quota report; not an OVHcloud account order query."""
+    """Show local reservation count; does not create orders or query account."""
     try:
         configured = os.getenv("OVH_AUTO_BUY_MAX_SERVERS", "2")
         if configured not in ("1", "2"):
             raise PurchaseSafetyError("OVH_AUTO_BUY_MAX_SERVERS must be 1 or 2")
         path = Path(os.getenv("OVH_AUTO_BUY_QUOTA_JOURNAL", DEFAULT_PATH))
         quota = PurchaseQuota(path, max_servers=int(configured))
-        legacy = path.with_name("intent.json")
-        if legacy.exists() or legacy.is_symlink():
-            raise PurchaseSafetyError(
-                "Legacy intent journal found: migrate/reconcile before enabling purchases"
-            )
+        quota._check_legacy()
         attempts = quota.read()
-        print(f"Local automated purchase quota: {len(attempts)}/{quota.max_servers} "
-              "reservations used (not an OVHcloud account-wide total).")
+        print(f"KS-LE-6 purchase quota: {len(attempts)}/{quota.max_servers} "
+              "reserved slots (local monitor ledger, not account-wide).")
         for item in attempts:
-            print(f"  {item['planCode']} {item['datacenter'].upper()}: {item['status']}")
-        print("Approved for future preview: KS-LE-6 exact preferred FQN only.")
-        print("Secondary model NOT YET APPROVED. Automatic checkout is DISABLED.")
+            print(
+                f"  Slot {item['slot']}: {item['fqn']} / "
+                f"{item['datacenter'].upper()} / {item['status']}"
+            )
+        print("Eligible candidate disks: " + ", ".join(
+            fqn.split(".")[2] for fqn in APPROVED_FQNS
+        ))
+        print("Same or different disks allowed; only Europe or Canada.")
+        print("Live checkout DISABLED. No purchase or reservation created by this command.")
         return 0
     except (PurchaseSafetyError, OSError, ValueError) as exc:
-        print(f"Quota status unavailable (purchasing remains blocked): {exc}")
+        print(f"Quota status unavailable; purchases blocked: {exc}")
         return 1
