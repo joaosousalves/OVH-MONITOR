@@ -4,6 +4,8 @@ from decimal import Decimal
 from pathlib import Path
 import tempfile
 import unittest
+import os
+from unittest.mock import patch
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -114,6 +116,29 @@ class PurchaseQuotaTests(unittest.TestCase):
                 ledger(path, approved=(SECOND,))
             with self.assertRaises(guard.PurchaseSafetyError):
                 ledger(path).reserve(fqn=THIRD, datacenter="bhs", total=AMOUNT)
+
+    def test_read_only_cli_reports_zero_of_two_without_creating_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "purchases-v1.json"
+            with patch.dict(os.environ, {
+                "OVH_AUTO_BUY_QUOTA_JOURNAL": str(path),
+                "OVH_AUTO_BUY_MAX_SERVERS": "2",
+            }):
+                with patch("builtins.print") as output:
+                    self.assertEqual(q.run_quota_status(), 0)
+            self.assertFalse(path.exists())
+            self.assertIn("0/2", output.call_args_list[0].args[0])
+            self.assertIn("NOT YET APPROVED", output.call_args_list[2].args[0])
+
+    def test_read_only_cli_warns_about_legacy_journal(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "purchases-v1.json"
+            (Path(d) / "intent.json").write_text("previous attempt")
+            with patch.dict(os.environ, {"OVH_AUTO_BUY_QUOTA_JOURNAL": str(path)}):
+                with patch("builtins.print") as output:
+                    self.assertEqual(q.run_quota_status(), 1)
+            self.assertIn("Legacy intent", output.call_args.args[0])
+            self.assertFalse(path.exists())
 
     def test_wrong_outcome_sequence_or_order_id_rejected(self):
         with tempfile.TemporaryDirectory() as d:
