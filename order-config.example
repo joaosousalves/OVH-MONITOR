@@ -26,3 +26,10 @@ OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 # Do NOT grant POST /order/cart/*/checkout or POST /me/order/*/pay yet.
 # The --simulate-checkout command is fully offline and does not need a key.
 # Phase C does NOT implement live checkout or automated email.
+
+# Phase D: never purchase more than two servers in total with this monitor.
+# Supported values: 1 or 2 only. Different models share the SAME cap.
+OVH_AUTO_BUY_MAX_SERVERS=2
+# Future shared ledger (do not manually edit/remove, even after timeouts).
+OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v1.json
+# Secondary preferred model is intentionally unset until selected explicitly.
