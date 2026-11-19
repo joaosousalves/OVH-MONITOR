@@ -86,6 +86,17 @@ class OrderProbeTests(unittest.TestCase):
         self.assertEqual(len(opts), 3)
         self.assertIn(probe.PREFERRED_STORAGE_OPTION, opts)
 
+    def test_quote_policy_failure_always_deletes_cart(self):
+        fake = FakeClient()
+        def reject_quote(quote):
+            self.assertEqual(quote["prices"]["withTax"]["text"], "39,99 EUR")
+            raise probe.OrderProbeError("price policy refused quote")
+        with self.assertRaisesRegex(probe.OrderProbeError, "price policy"):
+            probe.test_order(fake, quote_validator=reject_quote)
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in fake.calls))
+
     def test_order_rejection_still_cleans_up_cart(self):
         fake = FakeClient(fail_path="/order/cart/cart-123/eco/options")
         with self.assertRaises(probe.OrderProbeError):
