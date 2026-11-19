@@ -314,7 +314,8 @@ def make_api_client(env: Mapping[str, str] | None = None) -> OVHCartClient:
 
 
 def preview(policy: PurchasePolicy, *, stocks: list[Stock],
-            client: OVHCartClient | None, journal: OrderJournal) -> str:
+            client: OVHCartClient | None, journal: OrderJournal,
+            quota: Any = None) -> str:
     """Read-only decision, plus optional safe temporary cart and quote.
 
     An empty stock list fails closed to avoid treating a partial feed as
@@ -328,6 +329,16 @@ def preview(policy: PurchasePolicy, *, stocks: list[Stock],
             "An earlier purchase was reserved/submitted or is uncertain. "
             "Reconcile it in the OVHcloud account; preview refuses further carts."
         )
+    if quota is not None:
+        from purchase_quota import OPEN_STATES
+        quota._check_legacy()
+        attempts = quota.read()
+        if len(attempts) >= policy.max_servers:
+            return f"LIMIT REACHED: {len(attempts)}/{policy.max_servers} servers reserved. No cart created."
+        if any(record["status"] in OPEN_STATES for record in attempts):
+            raise PurchaseSafetyError(
+                "Previous KS-LE-6 purchase not yet reconciled; no new cart created"
+            )
     if not stocks:
         raise PurchaseSafetyError("Stock feed returned no rows")
     choice = choose_candidate(stocks, policy)
@@ -363,14 +374,60 @@ def run_purchase_preview() -> int:
         policy = PurchasePolicy.from_env()
         journal_path = Path(os.getenv("OVH_AUTO_BUY_JOURNAL", DEFAULT_JOURNAL))
         journal = OrderJournal(journal_path)
+        from purchase_quota import PurchaseQuota, DEFAULT_PATH
+        quota = PurchaseQuota(
+            Path(os.getenv("OVH_AUTO_BUY_QUOTA_JOURNAL", DEFAULT_PATH)),
+            max_servers=policy.max_servers,
+        )
         # Query stock before creating credentials-based client. No stock =>
         # no account API calls, no cart and no journal changes.
         stocks = retrieve_stock()
         candidate = choose_candidate(stocks, policy)
         api = make_api_client() if candidate is not None else None
-        result = preview(policy, stocks=stocks, client=api, journal=journal)
+        result = preview(policy, stocks=stocks, client=api, journal=journal, quota=quota)
         print(result)
         return 0
     except (PurchaseSafetyError, OrderProbeError, MonitorError, APITransientError) as exc:
         LOG.error("Purchase preview blocked (no order made): %s", exc)
+        return 1
+
+
+def render_disk_preferences(stocks: list[Stock]) -> str:
+    """Human-readable 128GB KS-LE-6 storage priority and live stock report."""
+    if not stocks:
+        raise PurchaseSafetyError("No KS-LE-6 stock records; availability unknown")
+    headings = {
+        STORAGE_PRIORITIES[0]: "2 x 512 GB NVMe + 2 x 4 TB HDD (existing first choice)",
+        STORAGE_PRIORITIES[1]: "2 x 1.92 TB NVMe",
+        STORAGE_PRIORITIES[2]: "3 x 1 TB NVMe",
+        STORAGE_PRIORITIES[3]: "4 x 960 GB SATA SSD",
+    }
+    lines = [
+        "KS-LE-6 / 128 GB RAM: disk preferences, highest priority first",
+        "Allowed countries: Canada (BHS), France, UK, Poland (European datacenters)",
+        "Two KS-LE-6 servers maximum, same or different disks; checkout disabled.",
+    ]
+    for number, storage in enumerate(STORAGE_PRIORITIES, 1):
+        matches = sorted(
+            (item for item in stocks
+             if item.storage == storage
+             and item.fqn == f"{PLAN_CODE}.{RAM_CODE}.{storage}"
+             and item.datacenter in DATACENTERS),
+            key=lambda item: DATACENTERS.index(item.datacenter),
+        )
+        lines.append(f"\n{number}. {headings[storage]}")
+        if not matches:
+            lines.append("   Not reported in the current stock feed (UNKNOWN, not sold out).")
+        for item in matches:
+            lines.append(f"   {item.datacenter.upper():<4} {item.status}")
+    return "\n".join(lines)
+
+
+def run_list_disk_preferences() -> int:
+    """Public read-only; no cart, API credentials or purchase journal."""
+    try:
+        print(render_disk_preferences(retrieve_stock(plan_code=PLAN_CODE)))
+        return 0
+    except (PurchaseSafetyError, MonitorError, APITransientError) as exc:
+        LOG.error("Disk inventory not confirmed: %s", exc)
         return 1
