@@ -545,83 +545,103 @@ Official OVHcloud documentation:
 - https://developers.eu.ovhcloud.com/reference/payment/
 - https://developers.eu.ovhcloud.com/reference/offers-services/orders/
 
-## Phase D — choose a second preferred KS-LE model; two-server maximum
+## Phase D — TWO KS-LE-6 128GB servers, prioritized disk choices
 
-**The primary target is unchanged:** KS-LE-6, plan `27skle06-v1`,
-**128 GB RAM and 2 × 512 GB NVMe + 2 × 4 TB HDD**. No second server
-has been approved for ordering yet. Live checkout remains unimplemented
-and `OVH_AUTO_BUY_ENABLED=false`.
+The requirement is **at most two KS-LE-6 servers total** (`27skle06-v1`),
+**both with 128 GB RAM**, and either **the same disk configuration**
+or **different configurations**. These are NOT two distinct models.
+Both purchases must be in a **European or Canadian** datacenter.
 
-### Discover the other five models, including real hardware availability
+Current disk order for purchase previews (highest preference first):
+
+| Priority | Exact stock storage code | Disk configuration |
+| --- | --- | --- |
+| 1 | `hybridsoftraid-2x4000sa-2x500nvme` | 2 × 512 GB NVMe + 2 × 4 TB HDD |
+| 2 | `softraid-2x1920nvme` | 2 × 1.92 TB NVMe |
+| 3 | `softraid-3x1000nvme` | 3 × 1 TB NVMe |
+| 4 | `softraid-4x960ssd` | 4 × 960 GB SATA SSD |
+
+These are provisional *ordered preferences* for **read-only preview**
+until the user confirms final purchase criteria. The first choice is
+unchanged. Exact hardware is validated against
+`27skle06-v1.ram-128g-ddr4-ecc-2400.<storage>`. A fake/mismatched RAM or
+storage code is not eligible.
+
+Accepted datacenter codes only: `bhs` (Canada); `fra`, `gra`,
+`rbx`, `sbg` (France); `lon` (UK); `waw` (Poland). These
+are Europe or Canada only. Datacenter priority is evaluated after disk
+priority. The user can revise the disk order before checkout goes live.
+
+### Inspect KS-LE-6 configurations and location availability
 
 ```bash
 cd /opt/ovh-ksle-monitor
 sudo git pull origin main
 python3 -m unittest discover -s tests -v
-python3 ksle_monitor.py --list-eco-options
+python3 ksle_monitor.py --list-ksle6-disks
 ```
 
-This **read-only** command requires no credentials. It checks OVHcloud's
-public availability API for KS-LE-1, KS-LE-2, KS-LE-3, KS-LE-4, KS-LE-5
-and KS-LE-6. It reports the **exact FQN, RAM code, disk code and
-datacenter**, and shows one summary for each model. If no orderable
-configuration appears, it says so. If an API request fails, the model is
-labelled **CHECK FAILED / unknown**, never falsely marked sold out.
-A code like `1H-high` is a provisioning lead-time indicator, not a
-guaranteed inventory quantity. The six model checks are paced rather
-than executed in parallel. The 30-second KS-LE-6 monitor and its alert
-state are untouched by this manual command.
+The last command reads the public stock API **without credentials,
+temporary carts or journal writes**. It prints each disk type's status
+in the accepted Europe/Canada datacenters. The existing `--list`
+command also continues showing every reported combination. A code like
+`1H-high` indicates a provisioning lead-time estimate, not a count of
+available servers or a reservation.
 
-Model overview and starting advertised prices in the Portuguese market:
-https://eco.ovhcloud.com/pt/?display=list&range=kimsufi
-Advertised prices **exclude VAT, installation and optional addons**;
-only a real GET checkout quotation is authoritative. Do not select a
-second SKU solely on the website's base price.
+### Shared lifetime limit of two, including matching configurations
 
-### Hard quota: at most TWO total automated purchases
+`purchase_quota.PurchaseQuota` stores **slot 1 and slot 2**
+under a single atomic journal and local file lock. Each slot has a
+unique numeric slot ID; the **same plan and exact FQN may occur twice**.
+Two different disk FQNs may also fill these slots. After two recorded
+attempts, **no third reservation** is allowed, including after
+restarts or changing the preferred disks.
 
-The new `purchase_quota.PurchaseQuota` uses a **single durable quota
-journal shared across all selected models**, not a separate limit of
-two for each model. It is preconfigured to approve the **exact KS-LE-6
-preferred FQN only**. A second distinct model/configuration requires
-explicit future approval. Third reservations always fail. Rebuying the
-same plan is blocked. A submitted or uncertain order blocks any other
-reservation until explicitly reconciled; even after confirming both
-orders, the two slots remain permanently consumed.
+The second attempt is blocked while the first is in `reserved`,
+`submitted`, or `unknown` state. Only once an externally verified
+first attempt is marked `confirmed` can slot 2 be reserved. Timeout
+or an uncertain result is deliberately **not retried automatically**.
 
-Example settings to append to the existing root-only
-`/etc/ovh-ksle-order.env` without replacing the existing API keys:
+The new journal uses **schema 2**, at
+`/var/lib/ovh-ksle-purchase/purchases-v2.json`. A legacy
+`intent.json` or `purchases-v1.json` journal will **block**
+new reservations until a human reconciles it against OVHcloud.
+Do not delete these records simply to bypass the limit.
+
+Add or correct these entries in the existing, root-only
+`/etc/ovh-ksle-order.env` (do not overwrite its actual credentials):
 
 ```ini
 OVH_AUTO_BUY_ENABLED=false
 OVH_AUTO_BUY_MAX_SERVERS=2
-OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v1.json
+OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
+OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 ```
 
-The allowed maximum is **1 or 2, never more**. The old single-attempt
-journal (`/var/lib/ovh-ksle-purchase/intent.json`) is deliberately not
-auto-migrated: an existing old reservation must be reconciled with the
-account before using the new quota. Never delete or manually reset
-purchase journals to bypass a limit.
-
-The new read-only status command does not create any reservations:
+Check the local quota without changing it:
 
 ```bash
 python3 ksle_monitor.py --purchase-quota-status
 ```
 
-It reports the local monitor's recorded attempts, **not a count of
-every dedicated server already owned in the OVHcloud account**.
-Account-wide order reconciliation must be completed separately before
-enabling future live checkout. The future order worker must share one
-host, one ledger and one lock, or use a distributed transaction/lock.
+The status is **local ledger attempts**, not a verified count of all
+servers already ordered or owned in your OVHcloud account. Any
+existing KS-LE-6 orders in the account must be reconciled before
+activating a future live purchaser.
 
-**No automatic checkout, systemd purchase worker or real payment has
-been activated.** Select the second model and exact storage/RAM FQN
-after reviewing the inventory. The combined total first-charge budget,
-per-server monthly-renewal cap and desired datacenter priorities must
-be explicitly approved before any live purchaser is wired to this
-quota mechanism.
+### Activation remains blocked
+
+`--purchase-preview` now recognizes all four disk options, sorted
+by their priority, and refuses to prepare a cart when both
+reservation slots are used or an earlier order is unresolved.
+The preview itself creates no reservation or billable order.
+
+The previous email monitor still checks all KS-LE-6 storage options
+every 30 seconds. It does not load purchase credentials.
+**No live POST checkout, automated buying systemd worker, or payment
+submission has been enabled.** Real-order safeguards still require
+recurring monthly price verification, account-wide order reconciliation,
+purchase-result notification delivery, and explicit user authorization.
 
 ## Troubleshooting
 
