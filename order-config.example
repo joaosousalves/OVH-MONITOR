@@ -27,9 +27,16 @@ OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 # The --simulate-checkout command is fully offline and does not need a key.
 # Phase C does NOT implement live checkout or automated email.
 
-# Phase D: never purchase more than two servers in total with this monitor.
-# Supported values: 1 or 2 only. Different models share the SAME cap.
+# KS-LE-6 only; at most TWO total servers, same or different storage.
+# 128GB RAM in every eligible configuration. 1 or 2; never more.
 OVH_AUTO_BUY_MAX_SERVERS=2
-# Future shared ledger (do not manually edit/remove, even after timeouts).
-OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v1.json
-# Secondary preferred model is intentionally unset until selected explicitly.
+# Shared two-slot ledger for future checkout, NEVER clear it after a timeout.
+OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
+# Ordered disk preferences are currently defined in purchase_guard.py:
+# 1. 2x512GB NVMe + 2x4TB HDD (original preference)
+# 2. 2x1.92TB NVMe
+# 3. 3x1TB NVMe
+# 4. 4x960GB SATA SSD
+# OVH_AUTO_BUY_ALLOWED_DATACENTERS must contain only:
+# bhs (Canada), fra/gra/rbx/sbg (France), lon (UK), waw (Poland).
+# No checkout is implemented or enabled by these settings.
