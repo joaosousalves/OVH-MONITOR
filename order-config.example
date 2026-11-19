@@ -17,3 +17,12 @@ OVH_AUTO_BUY_MAX_TOTAL_EUR=45.00
 OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
 # Private, root-owned journal to block later repeated/uncertain purchases.
 OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
+
+# Phase C: credentials MAY optionally be rotated to include only these
+# additional GET rights for --check-payment-readiness:
+# GET /me/payment/method
+# GET /me/payment/method/*
+# GET /me/order/*/status  (future read-only reconciliation)
+# Do NOT grant POST /order/cart/*/checkout or POST /me/order/*/pay yet.
+# The --simulate-checkout command is fully offline and does not need a key.
+# Phase C does NOT implement live checkout or automated email.
