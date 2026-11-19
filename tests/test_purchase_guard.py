@@ -147,7 +147,8 @@ class PurchaseGuardTests(unittest.TestCase):
     def test_purchase_preview_checks_global_slots_before_cart(self):
         from purchase_quota import PurchaseQuota
         with tempfile.TemporaryDirectory() as d:
-            q = PurchaseQuota(Path(d) / "purchases-v2.json")
+            q = PurchaseQuota(Path(d) / "purchases-v2.json",
+                              approved_fqns=guard.APPROVED_FQNS)
             legacy = guard.OrderJournal(Path(d) / "intent.json")
             self.assertEqual(q.reserve(
                 fqn=guard.EXPECTED_FQN, datacenter="bhs",
