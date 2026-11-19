@@ -510,6 +510,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--list", action="store_true", help="Print all API-reported locations and configurations")
     group.add_argument("--list-test-stock", action="store_true",
                        help="Read-only stock check for --test-plan (KS-LE-1 or KS-LE-6)")
+    group.add_argument("--list-eco-options", action="store_true",
+                       help="Read-only live stock for KS-LE-1 to KS-LE-6; no credentials")
     group.add_argument("--list-prices", action="store_true", help="Show cached public monthly catalog estimates (no cart)")
     group.add_argument("--diagnose-prices", action="store_true", help="Inspect KS-LE-6 public catalog price structure without credentials")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
@@ -535,6 +537,9 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        if args.list_eco_options:
+            from eco_discovery import run_list_eco_options
+            return run_list_eco_options()
         if args.check_payment_readiness:
             from payment_readiness import run_payment_readiness
             return run_payment_readiness()
