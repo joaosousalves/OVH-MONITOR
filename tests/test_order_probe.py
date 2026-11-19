@@ -97,6 +97,36 @@ class OrderProbeTests(unittest.TestCase):
         self.assertFalse(any(method == "POST" and path.endswith("/checkout")
                              for method, path, _, _ in fake.calls))
 
+    def test_renewal_observer_sees_existing_item_responses_without_extra_calls(self):
+        class WithRenewalPrices(FakeClient):
+            def request(self, method, path, payload=None, query=None):
+                result = super().request(method, path, payload, query)
+                if method == "POST" and (path.endswith("/eco") or path.endswith("/eco/options")):
+                    result = dict(result)
+                    result["prices"] = [{"label": "RENEW", "price": {
+                        "currencyCode": "EUR", "value": "9.00",
+                    }}]
+                return result
+
+        fake = WithRenewalPrices()
+        observed = []
+        probe.test_order(fake, renewal_observer=observed.append)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(len(observed[0]), 4)  # Server + three mandatory addons.
+        self.assertFalse(any(method == "GET" and "/item/" in path
+                             for method, path, _, _ in fake.calls))
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in fake.calls))
+
+    def test_renewal_observer_failure_still_deletes_cart(self):
+        fake = FakeClient()
+        def fail(_items):
+            raise ValueError("simulated evidence failure")
+        with self.assertRaisesRegex(ValueError, "evidence failure"):
+            probe.test_order(fake, renewal_observer=fail)
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+
     def test_order_rejection_still_cleans_up_cart(self):
         fake = FakeClient(fail_path="/order/cart/cart-123/eco/options")
         with self.assertRaises(probe.OrderProbeError):

@@ -29,6 +29,7 @@ from ksle_monitor import (
 from order_probe import (
     OrderProbeError, OVHCartClient, test_order, verify_available_test_fqn,
 )
+from renewal_pricing import inspect_cart_renewals
 
 LOG = logging.getLogger("ksle-purchase-preview")
 # These four KS-LE-6 layouts have 128 GB RAM; order is purchase priority.
@@ -363,6 +364,7 @@ def preview(policy: PurchasePolicy, *, stocks: list[Stock],
         raise PurchaseSafetyError("Authenticated cart credentials required to quote available stock")
     verify_available_test_fqn(PLAN_CODE, choice.fqn, choice.datacenter)
     holder: dict[str, Decimal] = {}
+    renewal_notes: list[str] = []
     def validate(quote_data: Any) -> None:
         total = checkout_total_eur(quote_data)
         if total > policy.max_total_eur:
@@ -371,18 +373,25 @@ def preview(policy: PurchasePolicy, *, stocks: list[Stock],
                 f"{policy.max_total_eur:.2f} EUR"
             )
         holder["total"] = total
+    def observe_renewal(item_responses: tuple[Any, ...]) -> None:
+        # An item RENEW price is evidence, NOT a verified monthly amount
+        # inclusive of tax. Never approve checkout with this information.
+        renewal_notes.append(inspect_cart_renewals(item_responses).summary())
     test_order(client, datacenter=choice.datacenter, plan_code=PLAN_CODE,
-               target_fqn=choice.fqn, quote_validator=validate)
+               target_fqn=choice.fqn, quote_validator=validate,
+               renewal_observer=observe_renewal)
     amount = holder.get("total")
     if amount is None:
         raise PurchaseSafetyError("No validated checkout price")
+    renewal_summary = (renewal_notes[0] if renewal_notes
+                       else "Cart renewal evidence not captured.")
     return (
         f"PREVIEW ONLY: eligible {PLAN_CODE}, {choice.datacenter.upper()}, "
         f"{choice.fqn}; initial total {amount:.2f} EUR incl. VAT "
         f"<= cap {policy.max_total_eur:.2f} EUR. "
         f"Monthly VAT-inclusive cap {policy.max_monthly_eur:.2f} EUR; "
         "recurring renewal charge NOT independently verified. "
-        "No order/payment submitted."
+        f"{renewal_summary} No order/payment submitted."
     )
 
 

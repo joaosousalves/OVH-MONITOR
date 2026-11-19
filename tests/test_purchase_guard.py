@@ -254,6 +254,24 @@ class PurchaseGuardTests(unittest.TestCase):
                         guard.preview(policy(), stocks=[stock()], client=object(), journal=journal)
             self.assertIsNone(journal.read())
 
+    def test_cart_renewal_labels_are_reported_without_approving_monthly_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = guard.OrderJournal(Path(directory) / "intent.json")
+            def fake_quote(*args, **kwargs):
+                kwargs["quote_validator"](checkout("33.20"))
+                responses = tuple({"duration": "P1M", "prices": [{
+                    "label": "RENEW", "price": {"currencyCode": "EUR", "value": value},
+                }]} for value in ("27.00", "3.00", "2.00", "0.00"))
+                kwargs["renewal_observer"](responses)
+            with patch.object(guard, "verify_available_test_fqn"):
+                with patch.object(guard, "test_order", side_effect=fake_quote):
+                    result = guard.preview(policy(), stocks=[stock()], client=object(),
+                                           journal=journal)
+            self.assertIn("Cart RENEW component sum 32.00 EUR", result)
+            self.assertIn("Monthly VAT-inclusive cap 37.00 EUR", result)
+            self.assertIn("VAT status, discounts, and final monthly renewal NOT VERIFIED", result)
+            self.assertIsNone(journal.read())
+
     def test_journal_reservation_persistent_and_one_time(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "intent.json"

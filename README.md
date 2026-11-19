@@ -674,9 +674,15 @@ non-billable checks into **one manual, one-shot review**:
    APIs. No card details or payment identifiers are displayed.
 5. Report the number of local slots remaining. All four disk options
    are approved preferences, but cannot be purchased yet.
-6. Display the monthly cap separately, with an explicit
-   **MONTHLY PRICE UNVERIFIED** warning: first payment is not a
-   trustworthy substitute for recurring renewal pricing.
+6. Inspect the `RENEW` price labels already returned when adding the
+   server and mandatory addons to the temporary cart. If **every** item
+   has one unambiguous EUR monthly price label, display their sum as
+   **cart renewal evidence**; otherwise report missing/incomplete evidence.
+   This makes no extra API calls or changes to the API key permissions.
+7. Display the monthly cap separately, with an explicit
+   **MONTHLY PRICE UNVERIFIED** warning: `RENEW` labels do not attest
+   to VAT, later discounts or the actual renewal bill, and the initial
+   checkout amount is not a monthly price.
 
 Run it manually using the existing root-only
 `/etc/ovh-ksle-order.env` configuration (if created):
@@ -697,6 +703,14 @@ stock may create and then delete a temporary cart, but **never**
 submits `POST /order/cart/{cartId}/checkout` or payment requests.
 The order client still blocks those routes. The preflight creates
 **no quota reservations** and never changes existing order records.
+
+Example of a possible preflight message when all four cart components
+contain EUR `RENEW` labels: `Cart RENEW component sum 32.00 EUR
+(4 item(s)); VAT status, discounts, and final monthly renewal NOT
+VERIFIED.` This is illustrative, **not a live OVHcloud price**. If a
+component has no price label, the monitor intentionally omits any sum.
+Preflight still cannot confirm whether the **37.00 EUR/month with VAT**
+budget is respected, and cannot create a billable order.
 
 `OVH_AUTO_BUY_ENABLED=true` continues to fail closed. The owner has
 approved **80.00 EUR initial with VAT** and **37.00 EUR monthly with VAT**

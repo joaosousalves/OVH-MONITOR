@@ -346,7 +346,8 @@ def extract_quote(quote_data: Any) -> str:
 def test_order(client: OVHCartClient, datacenter: str = "bhs",
                storage_option: str = PREFERRED_STORAGE_OPTION, subsidiary: str = "PT",
                plan_code: str = PLAN_CODE, target_fqn: str | None = None,
-               quote_validator: Any = None) -> str:
+               quote_validator: Any = None,
+               renewal_observer: Any = None) -> str:
     """Build and quote a temporary cart; NEVER submit checkout or payment."""
     datacenter = datacenter.lower()
     if datacenter not in DATACENTERS:
@@ -391,14 +392,17 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
         if not isinstance(item_id, int) or item_id <= 0:
             raise OrderProbeError("Adding server to cart returned no valid itemId")
 
+        item_responses = [order_item] if renewal_observer is not None else None
         for addon in addons:
-            client.request("POST", cart_path + "/eco/options", {
+            addon_response = client.request("POST", cart_path + "/eco/options", {
                 "itemId": item_id,
                 "planCode": addon,
                 "duration": offer["duration"],
                 "pricingMode": offer["pricingMode"],
                 "quantity": 1,
             })
+            if item_responses is not None:
+                item_responses.append(addon_response)
         for label, value in configurations.items():
             client.request("POST", cart_path + f"/item/{item_id}/configuration", {
                 "label": label,
@@ -410,6 +414,11 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             # A fail-closed price policy can reject an otherwise valid cart.
             # finally still deletes the temporary cart if the policy fails.
             quote_validator(quote_data)
+        if renewal_observer is not None:
+            # Only expose item-level price labels already returned by the
+            # temporary cart operations. No extra API permissions or calls.
+            # RENEW labels do not prove VAT-inclusive recurring charges.
+            renewal_observer(tuple(item_responses))
         return f"Carrinho de teste validado: {plan_code}, {datacenter.upper()}, addons={addons}; total com IVA: {price}. Nenhuma encomenda criada."
     finally:
         if cart_id is not None:
