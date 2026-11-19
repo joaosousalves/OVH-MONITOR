@@ -212,6 +212,66 @@ class OrderJournal:
             os.close(lock_fd)
 
 
+    def record_outcome(self, status: str, *, order_id: int | None = None) -> None:
+        """Persist result without ever clearing the duplicate-purchase guard.
+
+        'submitted' means that an order identifier was returned; it does NOT
+        prove payment or provisioning. 'unknown' demands manual reconciliation.
+        A receipt/timeout must never trigger a second checkout attempt.
+        """
+        if status not in ("submitted", "unknown"):
+            raise PurchaseSafetyError("Invalid order outcome")
+        if status == "submitted" and (
+                type(order_id) is not int or not 0 < order_id < 10**15):
+            raise PurchaseSafetyError("Valid numeric order ID required")
+        if status == "unknown" and order_id is not None:
+            raise PurchaseSafetyError("Do not attach order ID to unknown status")
+        directory = self.path.parent
+        if not directory.is_dir():
+            raise PurchaseSafetyError("No existing purchase journal directory")
+        if directory.stat().st_mode & 0o022:
+            raise PurchaseSafetyError("Purchase journal directory permissions unsafe")
+        lock_path = directory / ".intent.lock"
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR
+                          | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        tmp = None
+        try:
+            lock_stat = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_mode & 0o077:
+                raise PurchaseSafetyError("Purchase lock permissions unsafe")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            record = self.read()
+            if record is None or record.get("status") != "reserved":
+                raise PurchaseSafetyError("Only reserved purchases may change outcome")
+            record["status"] = status
+            record["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            if order_id is not None:
+                record["orderId"] = order_id
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=directory,
+                                             prefix=".outcome-", delete=False) as handle:
+                tmp = Path(handle.name)
+                os.fchmod(handle.fileno(), 0o600)
+                json.dump(record, handle, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self.path)
+            tmp = None
+            directory_fd = os.open(str(directory), os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if tmp is not None:
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            os.close(lock_fd)
+
+
+
+
 def make_api_client(env: Mapping[str, str] | None = None) -> OVHCartClient:
     env = os.environ if env is None else env
     return OVHCartClient(
