@@ -30,7 +30,9 @@ class FakeClient:
         self.calls.append((method, path))
         if path == "/me/payment/method":
             return self.ids
-        if path == "/me/payment/method/42":
+        if method == "GET" and path.startswith("/me/payment/method/"):
+            # Return a deliberately mismatched detail for requested ID 43.
+            # Validation, rather than the fake HTTP client, must reject it.
             return self.detail
         raise AssertionError("Unexpected payment operation: " + method + " " + path)
 
