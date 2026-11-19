@@ -339,7 +339,8 @@ def extract_quote(quote_data: Any) -> str:
 
 def test_order(client: OVHCartClient, datacenter: str = "bhs",
                storage_option: str = PREFERRED_STORAGE_OPTION, subsidiary: str = "PT",
-               plan_code: str = PLAN_CODE, target_fqn: str | None = None) -> str:
+               plan_code: str = PLAN_CODE, target_fqn: str | None = None,
+               quote_validator: Any = None) -> str:
     """Build and quote a temporary cart; NEVER submit checkout or payment."""
     datacenter = datacenter.lower()
     if datacenter not in DATACENTERS:
@@ -399,6 +400,10 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             })
         quote_data = client.request("GET", cart_path + "/checkout")
         price = extract_quote(quote_data)
+        if quote_validator is not None:
+            # A fail-closed price policy can reject an otherwise valid cart.
+            # finally still deletes the temporary cart if the policy fails.
+            quote_validator(quote_data)
         return f"Carrinho de teste validado: {plan_code}, {datacenter.upper()}, addons={addons}; total com IVA: {price}. Nenhuma encomenda criada."
     finally:
         if cart_id is not None:
