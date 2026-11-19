@@ -563,7 +563,11 @@ Current disk order for purchase previews (highest preference first):
 
 These are provisional *ordered preferences* for **read-only preview**
 until the user confirms final purchase criteria. The first choice is
-unchanged. Exact hardware is validated against
+unchanged. **Only the original hybrid disk layout is authorized by the
+future quota by default; the other three are preview candidates, not
+yet approved purchases.** After choosing any additional disk layouts,
+their exact FQNs must be explicitly included in the future purchase
+worker's approved list. Exact hardware is validated against
 `27skle06-v1.ram-128g-ddr4-ecc-2400.<storage>`. A fake/mismatched RAM or
 storage code is not eligible.
 
@@ -631,8 +635,9 @@ activating a future live purchaser.
 
 ### Activation remains blocked
 
-`--purchase-preview` now recognizes all four disk options, sorted
-by their priority, and refuses to prepare a cart when both
+`--purchase-preview` now recognizes all four disk options for
+comparison, sorted by priority. This does **not** authorize a real
+purchase of an alternate disk layout. It refuses a cart when both
 reservation slots are used or an earlier order is unresolved.
 The preview itself creates no reservation or billable order.
 
