@@ -10,7 +10,7 @@ import logging
 import time
 from typing import Callable
 
-from ksle_monitor import MonitorError, Stock, retrieve_stock
+from ksle_monitor import APITransientError, MonitorError, Stock, retrieve_stock
 
 LOGGER = logging.getLogger("ksle-catalogue-discovery")
 PLANS = {
@@ -70,6 +70,14 @@ def render_options(fetch: Callable[..., list[Stock]] = retrieve_stock,
                     f"  {stock.datacenter.upper():<4} {stock.status:<12} "
                     f"RAM={memory} | disks={storage} | FQN={stock.fqn}"
                 )
+        except APITransientError as exc:
+            # Honor OVH API backoff: never continue making requests after
+            # a rate-limit or temporary upstream outage.
+            all_checked = False
+            lines.append(f"\n{label} | {plan_code} | CHECK FAILED: {exc}")
+            lines.append("Stopping further requests to respect API cooldown.")
+            lines.append("Remaining plans NOT CHECKED; availability unknown.")
+            break
         except (MonitorError, OSError, ValueError) as exc:
             all_checked = False
             lines.append(f"\n{label} | {plan_code} | CHECK FAILED: {exc}")
