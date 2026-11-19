@@ -33,6 +33,12 @@ SAFE_ROUTES = {
         re.compile(r"^/order/catalog/public/eco$"),
         re.compile(r"^/order/cart/[A-Za-z0-9-]+/eco$"),
         re.compile(r"^/order/cart/[A-Za-z0-9-]+/checkout$"),
+        # Phase C: account read-only verification; no payment/order mutation.
+        re.compile(r"^/me/payment/method$"),
+        re.compile(r"^/me/payment/method/[0-9]+$"),
+        re.compile(r"^/me/order$"),
+        re.compile(r"^/me/order/[0-9]+$"),
+        re.compile(r"^/me/order/[0-9]+/status$"),
     ],
     "POST": [
         re.compile(r"^/order/cart$"),
