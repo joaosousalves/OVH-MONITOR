@@ -514,6 +514,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--diagnose-prices", action="store_true", help="Inspect KS-LE-6 public catalog price structure without credentials")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
     group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
+    group.add_argument("--purchase-preview", action="store_true",
+                       help="Phase B: KS-LE-6 preview with EUR price cap, NO checkout or payment")
     parser.add_argument("--datacenter", default="bhs", help="Datacenter for --test-order (default: bhs)")
     parser.add_argument("--storage", default="preferred", help="Storage addon code for --test-order (default: preferred)")
     parser.add_argument("--test-plan", choices=("ks-le-6", "ks-le-1"), default="ks-le-6",
@@ -524,6 +526,9 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        if args.purchase_preview:
+            from purchase_guard import run_purchase_preview
+            return run_purchase_preview()
         if args.list_test_stock:
             from order_probe import TEST_PLANS
             plan_code = TEST_PLANS[args.test_plan]
