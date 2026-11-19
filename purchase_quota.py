@@ -202,3 +202,29 @@ class PurchaseQuota:
             self._write(records)
 
         self._with_lock(apply)
+
+
+def run_quota_status() -> int:
+    """Read-only local quota report; not an OVHcloud account order query."""
+    try:
+        configured = os.getenv("OVH_AUTO_BUY_MAX_SERVERS", "2")
+        if configured not in ("1", "2"):
+            raise PurchaseSafetyError("OVH_AUTO_BUY_MAX_SERVERS must be 1 or 2")
+        path = Path(os.getenv("OVH_AUTO_BUY_QUOTA_JOURNAL", DEFAULT_PATH))
+        quota = PurchaseQuota(path, max_servers=int(configured))
+        legacy = path.with_name("intent.json")
+        if legacy.exists() or legacy.is_symlink():
+            raise PurchaseSafetyError(
+                "Legacy intent journal found: migrate/reconcile before enabling purchases"
+            )
+        attempts = quota.read()
+        print(f"Local automated purchase quota: {len(attempts)}/{quota.max_servers} "
+              "reservations used (not an OVHcloud account-wide total).")
+        for item in attempts:
+            print(f"  {item['planCode']} {item['datacenter'].upper()}: {item['status']}")
+        print("Approved for future preview: KS-LE-6 exact preferred FQN only.")
+        print("Secondary model NOT YET APPROVED. Automatic checkout is DISABLED.")
+        return 0
+    except (PurchaseSafetyError, OSError, ValueError) as exc:
+        print(f"Quota status unavailable (purchasing remains blocked): {exc}")
+        return 1
