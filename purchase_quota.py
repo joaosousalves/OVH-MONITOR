@@ -18,7 +18,8 @@ import stat
 import tempfile
 
 from purchase_guard import (
-    APPROVED_FQNS, DATACENTERS, PLAN_CODE, PurchaseSafetyError, parse_eur,
+    APPROVED_FQNS, DATACENTERS, EXPECTED_FQN, PLAN_CODE,
+    PurchaseSafetyError, parse_eur,
 )
 
 GLOBAL_LIMIT = 2
@@ -39,14 +40,17 @@ class PurchaseQuota:
     The caller receives an integer slot 1 or 2 (not a plan identifier).
     No live checkout method is provided here.
     """
-    def __init__(self, path: Path, approved_fqns: tuple[str, ...] = APPROVED_FQNS,
+    def __init__(self, path: Path, approved_fqns: tuple[str, ...] = (EXPECTED_FQN,),
                  max_servers: int = GLOBAL_LIMIT):
         if type(max_servers) is not int or max_servers not in (1, 2):
             raise PurchaseSafetyError("Global max server count must be 1 or 2")
         if (not isinstance(approved_fqns, tuple) or not approved_fqns
+                or approved_fqns[0] != EXPECTED_FQN
                 or len(set(approved_fqns)) != len(approved_fqns)
                 or any(not _valid_fqn(f) for f in approved_fqns)):
-            raise PurchaseSafetyError("Only explicitly approved KS-LE-6 128GB disk FQNs permitted")
+            raise PurchaseSafetyError(
+                "Only explicitly approved KS-LE-6 128GB disk FQNs permitted"
+            )
         self.path = Path(path)
         self.approved = frozenset(approved_fqns)
         self.max_servers = max_servers
@@ -241,11 +245,12 @@ def run_quota_status() -> int:
                 f"  Slot {item['slot']}: {item['fqn']} / "
                 f"{item['datacenter'].upper()} / {item['status']}"
             )
-        print("Eligible candidate disks: " + ", ".join(
+        print("Preview disk choices (not all authorized for purchase): " + ", ".join(
             fqn.split(".")[2] for fqn in APPROVED_FQNS
         ))
-        print("Same or different disks allowed; only Europe or Canada.")
-        print("Live checkout DISABLED. No purchase or reservation created by this command.")
+        print("Purchase approval currently limited to the original hybrid disk FQN.")
+        print("Same or different disks can fill both slots once explicitly approved.")
+        print("Only Europe or Canada; checkout DISABLED. No reservation created.")
         return 0
     except (PurchaseSafetyError, OSError, ValueError) as exc:
         print(f"Quota status unavailable; purchases blocked: {exc}")
