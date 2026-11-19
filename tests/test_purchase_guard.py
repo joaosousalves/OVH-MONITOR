@@ -90,6 +90,92 @@ class PurchaseGuardTests(unittest.TestCase):
             stock("bhs", "unavailable"), stock("gra", "unknown")
         ], policy()))
 
+    def test_four_ks_le_6_disks_share_128gb_ram_and_rank_by_storage(self):
+        self.assertEqual(len(guard.APPROVED_FQNS), 4)
+        self.assertEqual(guard.APPROVED_FQNS[0], guard.EXPECTED_FQN)
+        self.assertTrue(all(fqn.startswith(
+            "27skle06-v1.ram-128g-ddr4-ecc-2400."
+        ) for fqn in guard.APPROVED_FQNS))
+        # The highest-ranked disk wins, even at a later-priority datacenter.
+        items = [
+            stock("bhs", fqn=guard.APPROVED_FQNS[1], storage=guard.STORAGE_PRIORITIES[1]),
+            stock("waw", fqn=guard.APPROVED_FQNS[0], storage=guard.STORAGE_PRIORITIES[0]),
+        ]
+        p = guard.PurchasePolicy.from_env({
+            **ENV, "OVH_AUTO_BUY_ALLOWED_DATACENTERS": "bhs,waw",
+        })
+        self.assertEqual(guard.choose_candidate(items, p).fqn, guard.EXPECTED_FQN)
+
+    def test_fallback_to_next_disk_after_preferred_unavailable(self):
+        items = [
+            stock("bhs", "unavailable"),
+            stock("gra", "72H", fqn=guard.APPROVED_FQNS[1],
+                  storage=guard.STORAGE_PRIORITIES[1]),
+            stock("bhs", "1H-high", fqn=guard.APPROVED_FQNS[2],
+                  storage=guard.STORAGE_PRIORITIES[2]),
+        ]
+        self.assertEqual(guard.choose_candidate(items, policy()).fqn,
+                         guard.APPROVED_FQNS[1])
+
+    def test_candidate_rejects_non_matching_ram_disk_and_region(self):
+        items = [
+            stock("bhs", fqn=guard.APPROVED_FQNS[2],
+                  storage=guard.STORAGE_PRIORITIES[1]),
+            stock("bhs", fqn=guard.APPROVED_FQNS[1].replace("128g", "64g"),
+                  storage=guard.STORAGE_PRIORITIES[1]),
+            stock("syd", fqn=guard.APPROVED_FQNS[1],
+                  storage=guard.STORAGE_PRIORITIES[1]),
+        ]
+        self.assertIsNone(guard.choose_candidate(items, policy()))
+
+    def test_storage_preference_status_report_shows_all_four_and_eu_ca_only(self):
+        items = [
+            stock("bhs", "unavailable"),
+            stock("fra", "1H-high", fqn=guard.APPROVED_FQNS[1],
+                  storage=guard.STORAGE_PRIORITIES[1]),
+            stock("syd", "1H-high", fqn=guard.APPROVED_FQNS[2],
+                  storage=guard.STORAGE_PRIORITIES[2]),
+        ]
+        report = guard.render_disk_preferences(items)
+        self.assertIn("1. 2 x 512 GB NVMe + 2 x 4 TB HDD", report)
+        self.assertIn("2. 2 x 1.92 TB NVMe", report)
+        self.assertIn("3. 3 x 1 TB NVMe", report)
+        self.assertIn("4. 4 x 960 GB SATA SSD", report)
+        self.assertIn("FRA  1H-high", report)
+        self.assertNotIn("SYD", report)
+
+    def test_purchase_preview_checks_global_slots_before_cart(self):
+        from purchase_quota import PurchaseQuota
+        with tempfile.TemporaryDirectory() as d:
+            q = PurchaseQuota(Path(d) / "purchases-v2.json")
+            legacy = guard.OrderJournal(Path(d) / "intent.json")
+            self.assertEqual(q.reserve(
+                fqn=guard.EXPECTED_FQN, datacenter="bhs",
+                total=Decimal("33.20")), 1)
+            with patch.object(guard, "verify_available_test_fqn") as verify:
+                with patch.object(guard, "test_order") as cart:
+                    with self.assertRaisesRegex(guard.PurchaseSafetyError, "reconciled"):
+                        guard.preview(policy(), stocks=[stock()], client=object(),
+                                      journal=legacy, quota=q)
+            verify.assert_not_called()
+            cart.assert_not_called()
+            q.update_outcome(slot=1, status="submitted", order_id=100)
+            q.update_outcome(slot=1, status="confirmed", order_id=100)
+            self.assertEqual(q.reserve(
+                fqn=guard.APPROVED_FQNS[1], datacenter="gra",
+                total=Decimal("35.00")), 2)
+            with patch.object(guard, "test_order") as cart:
+                outcome = guard.preview(policy(), stocks=[stock()], client=object(),
+                                        journal=legacy, quota=q)
+            self.assertIn("LIMIT REACHED", outcome)
+            cart.assert_not_called()
+
+    def test_manual_disk_list_cli_no_cart(self):
+        with patch.object(guard, "retrieve_stock", return_value=[stock()]):
+            with patch("builtins.print") as print_result:
+                self.assertEqual(monitor.main(["--list-ksle6-disks"]), 0)
+        self.assertIn("KS-LE-6 / 128 GB RAM", print_result.call_args.args[0])
+
     def test_no_stock_does_not_create_cart_or_reservation(self):
         with tempfile.TemporaryDirectory() as directory:
             ledger = guard.OrderJournal(Path(directory) / "intent.json")
