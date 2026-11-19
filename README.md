@@ -431,6 +431,120 @@ The existing `ovh-ksle-monitor.service` and timer still run the plain
 `/etc/ovh-ksle-monitor.env`. They do not load any ordering credentials
 or invoke `--purchase-preview`.
 
+## Phase C — payment readiness and offline checkout simulation
+
+**Important: automatic purchasing is still disabled.** The code intentionally
+has **no live POST checkout/payment implementation**, and neither
+`OVH_AUTO_BUY_ENABLED=true` nor any CLI option can override that. The old
+`systemd` timer still only calls `--once` to check **KS-LE-6 stock**.
+
+Phase C adds:
+
+- `--check-payment-readiness`: authenticated **GET-only** check that the
+  account has exactly one default payment method marked `VALID`, with
+  one-click support and no expired date. This **cannot** prove sufficient
+  funds, 3-D Secure approval, or that an order will be paid automatically.
+  It never prints a card number, payment identifier or account details.
+- `--simulate-checkout --simulation-case accepted|timeout|rejected`: an
+  **entirely offline** mock of OVHcloud checkout with a temporary, isolated
+  order journal. It checks the configured example initial-charge cap, makes
+  exactly one call to a local fake gateway, persists `submitted` or
+  `unknown`, blocks a duplicate attempt and formats a mock notification
+  without sending email. It does **not** access OVHcloud APIs, send email,
+  reserve real stock, or buy a server.
+- `--reconcile-order-status`: **GET-only** inspection of an order ID
+  already persisted in the real purchase journal, if one ever exists.
+  If the journal indicates an uncertain attempt with no known order ID,
+  it requires manual OVHcloud account investigation. It **never deletes
+  the journal, retries checkout, or declares payment complete** merely
+  from a status response.
+
+### Additional API access for a payment check
+
+The existing cart-only key may return HTTP 403 for new account endpoints.
+To use `--check-payment-readiness`, create a **new OVHcloud API credential**
+or rotate the existing one with the prior cart permissions plus only:
+
+```text
+GET /me/payment/method
+GET /me/payment/method/*
+GET /me/order/*/status
+```
+
+The order-status route is only needed for future reconciliation, not
+payment readiness. Follow least privilege; don't enable checkout or
+payment rights, and don't share AK/AS/CK secrets. Change only the values
+in the already-protected `/etc/ovh-ksle-order.env`. API validity/expiry
+and source-IP restrictions still apply.
+
+### Test the new code
+
+After updating GitHub files on the VPS:
+
+```bash
+cd /opt/ovh-ksle-monitor
+sudo git pull origin main
+python3 -m unittest discover -s tests -v
+```
+
+The existing `/etc/ovh-ksle-order.env` should retain:
+
+```ini
+OVH_AUTO_BUY_ENABLED=false
+OVH_AUTO_BUY_MAX_TOTAL_EUR=45.00
+OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
+OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
+```
+
+`45.00` is only an example cap for the first charge (including VAT);
+it is not consent to buy, and the offline simulator's `39.99` EUR
+example charge **is not an OVHcloud price**. Do not overwrite the API
+credentials file when changing these settings.
+
+**No credentials or API calls needed for the offline simulator:**
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --property=EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --simulate-checkout --simulation-case accepted
+
+sudo systemd-run --wait --pipe --collect \
+  --property=EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --simulate-checkout --simulation-case timeout
+```
+
+**Optional real account check (read-only, requires GET permissions):**
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --property=EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --check-payment-readiness
+```
+
+Do not add this to the 30-second timer. New module simulations never use
+the real `OVH_AUTO_BUY_JOURNAL` and cannot create a persistent false
+purchase on your VPS.
+
+### Still required before live automated purchasing
+
+The real KS-LE-6 `P1M` checkout must be validated against both a
+user-approved initial-charge cap **and an independently verified
+monthly-recurring-with-tax cap**. The current Phase B price cap verifies
+only the first payment. In addition, a real order-submission transport
+would require a newly approved scope for `POST /order/cart/*/checkout`,
+payment method approval, an operator-approved kill switch, order ID
+reconciliation, real notifications, and an isolated systemd purchase
+worker. **None of that live submission path is activated or granted by
+Phase C.** Never treat an order ID as proof of payment or provisioning.
+
+Official OVHcloud documentation:
+- https://docs.us.ovhcloud.com/en/bare-metal-cloud/dedicated-servers/order-dedicated-server
+- https://developers.eu.ovhcloud.com/reference/payment/
+- https://developers.eu.ovhcloud.com/reference/offers-services/orders/
+
 ## Troubleshooting
 
 | Symptom | Check |
