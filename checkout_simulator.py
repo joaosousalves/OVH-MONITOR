@@ -14,7 +14,8 @@ import tempfile
 from typing import Any
 
 from purchase_guard import (
-    OrderJournal, PurchasePolicy, PurchaseSafetyError, EXPECTED_FQN,\n    DEFAULT_JOURNAL, make_api_client,
+    OrderJournal, PurchasePolicy, PurchaseSafetyError, EXPECTED_FQN,
+    DEFAULT_JOURNAL, make_api_client,
 )
 from order_probe import OVHCartClient, OrderProbeError
 
