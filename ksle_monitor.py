@@ -516,16 +516,34 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
     group.add_argument("--purchase-preview", action="store_true",
                        help="Phase B: KS-LE-6 preview with EUR price cap, NO checkout or payment")
+    group.add_argument("--check-payment-readiness", action="store_true",
+                       help="Phase C: GET-only check of default OVHcloud payment method")
+    group.add_argument("--simulate-checkout", action="store_true",
+                       help="Phase C: completely offline mock checkout, never charges")
+    group.add_argument("--reconcile-order-status", action="store_true",
+                       help="Phase C: GET-only recorded order status, never retries")
     parser.add_argument("--datacenter", default="bhs", help="Datacenter for --test-order (default: bhs)")
     parser.add_argument("--storage", default="preferred", help="Storage addon code for --test-order (default: preferred)")
     parser.add_argument("--test-plan", choices=("ks-le-6", "ks-le-1"), default="ks-le-6",
                         help="Product for manual --test-order only; stock timer remains KS-LE-6")
     parser.add_argument("--test-fqn", default=None,
                         help="Exact stock FQN for manual cart test; selects its RAM and storage")
+    parser.add_argument("--simulation-case", default="accepted",
+                        choices=("accepted", "timeout", "rejected"),
+                        help="Offline simulation scenario; used with --simulate-checkout")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        if args.check_payment_readiness:
+            from payment_readiness import run_payment_readiness
+            return run_payment_readiness()
+        if args.simulate_checkout:
+            from checkout_simulator import run_checkout_simulation
+            return run_checkout_simulation(args.simulation_case)
+        if args.reconcile_order_status:
+            from checkout_simulator import run_order_reconciliation
+            return run_order_reconciliation()
         if args.purchase_preview:
             from purchase_guard import run_purchase_preview
             return run_purchase_preview()
