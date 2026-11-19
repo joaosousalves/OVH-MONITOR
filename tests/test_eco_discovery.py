@@ -43,17 +43,20 @@ class EcoDiscoveryTests(unittest.TestCase):
         self.assertEqual(report.count("No currently orderable configuration"), 6)
         self.assertNotIn("RAM=", report)
 
-    def test_error_does_not_claim_out_of_stock(self):
+    def test_rate_limit_stops_requests_without_claiming_out_of_stock(self):
+        visited = []
         def fake_stock(*, plan_code):
+            visited.append(plan_code)
             if plan_code == "27skle02-v1":
                 raise monitor.APITransientError("HTTP 429")
             return sample(plan_code)
         report, good = discovery.render_options(fetch=fake_stock,
                                                sleep=lambda _: None, pause_seconds=0)
         self.assertFalse(good)
+        self.assertEqual(visited, ["27skle01-v1", "27skle02-v1"])
         self.assertIn("KS-LE-2 | 27skle02-v1 | CHECK FAILED: HTTP 429", report)
-        self.assertIn("Availability unknown", report)
-        self.assertIn("KS-LE-6", report)
+        self.assertIn("Remaining plans NOT CHECKED", report)
+        self.assertNotIn("KS-LE-6 |", report)
 
     def test_mismatched_plan_or_empty_response_rejected(self):
         for response in ([], sample("other-plan")):
