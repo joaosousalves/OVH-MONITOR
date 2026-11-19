@@ -5,3 +5,15 @@ OVH_APPLICATION_KEY=REPLACE_WITH_APPLICATION_KEY
 OVH_APPLICATION_SECRET=REPLACE_WITH_APPLICATION_SECRET
 OVH_CONSUMER_KEY=REPLACE_WITH_CONSUMER_KEY
 # Leave OVH_TOKEN unset when using the three keys.
+
+# Phase B: purchase readiness preview. No checkout code exists in this release.
+# Add the same variables to the EXISTING /etc/ovh-ksle-order.env;
+# do not overwrite a file already containing your real API credentials.
+OVH_AUTO_BUY_ENABLED=false
+# Required before running --purchase-preview: absolute maximum FIRST charge,
+# inclusive of VAT and setup fees (EUR). Example only, NOT consent to buy.
+OVH_AUTO_BUY_MAX_TOTAL_EUR=45.00
+# In order of preference; values outside this list are never considered.
+OVH_AUTO_BUY_ALLOWED_DATACENTERS=bhs,fra,gra,lon,rbx,sbg,waw
+# Private, root-owned journal to block later repeated/uncertain purchases.
+OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
