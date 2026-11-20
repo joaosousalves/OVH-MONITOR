@@ -790,10 +790,67 @@ read. A verified account count of two or more blocks further work.
 An incomplete account scan also blocks preflight. The existing 30-second
 stock-alert timer is unchanged and needs no additional credentials.
 
-**Still not solved:** pending order IDs not yet provisioned, contractual
+**Still not solved within Phase F:** pending order IDs not yet provisioned, contractual
 proof of zero minimum engagement when the API omits that metadata, and
 the independently verified monthly renewal total with VAT. Therefore
 all real purchase or payment operations remain impossible.
+
+## Phase H — manual pending-order inventory (read-only; no checkout)
+
+The separate `--reconcile-pending-orders` command now checks both existing
+KS-LE-6 services (Phase F) and OVHcloud purchase orders that have **not**
+reached `delivered` or `cancelled` status. It uses only these GET routes:
+
+```text
+GET /service
+GET /service/*
+GET /dedicated/server/*/specifications/hardware
+GET /me/order
+GET /me/order/*/status
+GET /me/order/*/details
+GET /me/order/*/details/*
+GET /me/order/*/details/*/extension
+```
+
+The order-detail **extension** supplies the commercial `order.plan.code`,
+which must match `27skle06-v1` or `27skle06`. Distinct ordered items are
+grouped by their cart item identifier or OVH billing-domain parent, so
+multiple invoice lines for a single server are not automatically counted as
+different servers. Two separate KS-LE-6 orders or a quantity of two use
+both quota slots. `notPaid`, `checking`, `delivering`, `documentsRequested`
+and `cancelling` remain open until their status is resolved. `unknown`,
+unrecognized statuses, missing product codes/details, ambiguous duplicates,
+API failures or oversized order lists **fail closed**, never returning a
+false zero. Account identifiers and purchase descriptions are omitted from
+CLI output and error messages. Order scans are bounded to 250 orders with
+100 details each, and may encounter OVHcloud rate limits.
+
+Orders marked `delivered` are excluded from **open-order counts**, because
+their provisioned servers should be represented in the service inventory.
+Very recent deliveries may not yet appear in `/service` and therefore still
+require manual verification. When both a matching service and an open order
+exist, the API data used here cannot prove whether they represent the same
+server; the program reports a possible count range and **refuses to claim a
+verified combined total**. It never assumes that they are distinct and
+never authorizes purchases. This is not a complete lifetime order audit.
+
+**Run once manually on Ubuntu**, using the existing root-only credentials
+file (the monitor timer does not run this command):
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ksle-pending-reconcile \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --reconcile-pending-orders
+```
+
+If OVHcloud returns `403 NOT_GRANTED_CALL` for order details or extensions,
+the read-only key needs the missing `GET` rights listed above. Preserve all
+existing permissions when rotating it; **do not add** POST checkout or
+payment rights. This command does not create carts, send emails, write
+purchase journals, or attempt any purchase. The separate purchase preflight
+remains explicitly **partial**, and checkout is still disabled.
 
 ## Troubleshooting
 

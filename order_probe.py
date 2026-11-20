@@ -49,6 +49,11 @@ SAFE_ROUTES = {
         re.compile(r"^/me/order$"),
         re.compile(r"^/me/order/[0-9]+$"),
         re.compile(r"^/me/order/[0-9]+/status$"),
+        # Phase H: GET-only inspection of outstanding order lines. The
+        # extension exposes the exact ordered plan code; no POST/checkout.
+        re.compile(r"^/me/order/[0-9]+/details$"),
+        re.compile(r"^/me/order/[0-9]+/details/[0-9]+$"),
+        re.compile(r"^/me/order/[0-9]+/details/[0-9]+/extension$"),
     ],
     "POST": [
         re.compile(r"^/order/cart$"),

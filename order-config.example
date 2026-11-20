@@ -30,6 +30,12 @@ OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 # GET /service/*
 # GET /dedicated/server/*/specifications/hardware
 # (read-only fallback when /service/{id} omits plan.code)
+# Phase H manual pending-order check (still no checkout/payment):
+# GET /me/order
+# GET /me/order/*/status
+# GET /me/order/*/details
+# GET /me/order/*/details/*
+# GET /me/order/*/details/*/extension
 # Do NOT grant POST /order/cart/*/checkout or POST /me/order/*/pay yet.
 # The --simulate-checkout command is fully offline and does not need a key.
 # Phase C does NOT implement live checkout or automated email.

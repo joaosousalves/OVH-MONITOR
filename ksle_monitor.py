@@ -545,6 +545,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="Phase E: manual quote + payment readiness; NEVER submit checkout or pay")
     group.add_argument("--reconcile-account", action="store_true",
                        help="GET-only KS-LE-6 service inventory against 2-server limit; no cart/order")
+    group.add_argument("--reconcile-pending-orders", action="store_true",
+                       help="GET-only KS-LE-6 pending-order and service inventory; no checkout/payment")
     group.add_argument("--check-payment-readiness", action="store_true",
                        help="Phase C: GET-only check of default OVHcloud payment method")
     group.add_argument("--simulate-checkout", action="store_true",
@@ -579,6 +581,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.reconcile_account:
             from account_reconciliation import run_account_reconciliation
             return run_account_reconciliation()
+        if args.reconcile_pending_orders:
+            from pending_orders import run_pending_order_reconciliation
+            return run_pending_order_reconciliation()
         if args.simulate_checkout:
             from checkout_simulator import run_checkout_simulation
             return run_checkout_simulation(args.simulation_case)
