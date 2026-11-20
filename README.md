@@ -3,7 +3,7 @@
 Standalone Python 3 service for Linux. It checks the official, public OVHcloud stock API every 30 seconds and sends an SMTP email when **any** KS-LE-6 storage configuration becomes available at **any** datacenter. Your preferred option is highlighted first:
 
 - **Preferred:** 2 × 512 GB NVMe + 2 × 4 TB HDD (`hybridsoftraid-2x4000sa-2x500nvme`)
-- Also alerts: 2 × 1.92 TB NVMe; 3 × 1 TB NVMe; 4 × 960 GB SATA SSD.
+- Also alerts, in this priority order: 4 × 960 GB SATA SSD; 3 × 1 TB NVMe; 2 × 1.92 TB NVMe.
 - All reported datacenters are checked, including Beauharnois (BHS), Canada.
 
 **Plan code:** `27skle06-v1`  
@@ -564,9 +564,9 @@ Current disk order for purchase previews (highest preference first):
 | Priority | Exact stock storage code | Disk configuration |
 | --- | --- | --- |
 | 1 | `hybridsoftraid-2x4000sa-2x500nvme` | 2 × 512 GB NVMe + 2 × 4 TB HDD |
-| 2 | `softraid-2x1920nvme` | 2 × 1.92 TB NVMe |
+| 2 | `softraid-4x960ssd` | 4 × 960 GB SATA SSD |
 | 3 | `softraid-3x1000nvme` | 3 × 1 TB NVMe |
-| 4 | `softraid-4x960ssd` | 4 × 960 GB SATA SSD |
+| 4 | `softraid-2x1920nvme` | 2 × 1.92 TB NVMe |
 
 All four exact disk layouts have been **explicitly approved by the
 owner** as future purchase preferences, in the order shown. The first
@@ -580,6 +580,10 @@ Accepted datacenter codes only: `bhs` (Canada); `fra` (Germany,
 Limburg); `gra`, `rbx`, `sbg` (France); `lon` (UK); `waw` (Poland).
 These are Europe or Canada only. Datacenter priority is evaluated after disk
 priority. The user can revise the disk order before checkout goes live.
+The owner revised the ranking on 20 November 2026: the 4 × 960 GB SATA SSD
+configuration is now **second**, and 2 × 1.92 TB NVMe is now **fourth**.
+The 128 GB RAM requirement, datacenters, two-server cap, 37 EUR monthly
+and 80 EUR initial limits, and zero-commitment requirement are unchanged.
 
 ### Inspect KS-LE-6 configurations and location availability
 

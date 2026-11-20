@@ -31,6 +31,26 @@ def response(preferred_status="unavailable", other_status="unavailable", dc="bhs
 
 
 class MonitorTests(unittest.TestCase):
+    def test_alert_and_catalog_price_order_follows_disk_preference(self):
+        from purchase_guard import APPROVED_FQNS, STORAGE_PRIORITIES
+        stocks = [
+            monitor.Stock(fqn, storage, "bhs", "1H-high")
+            for fqn, storage in zip(APPROVED_FQNS, STORAGE_PRIORITIES)
+        ]
+        self.assertEqual(
+            [stock.storage for stock in sorted(reversed(stocks), key=monitor.stock_sort_key)],
+            list(STORAGE_PRIORITIES),
+        )
+        import pricing
+        prices = {storage: "20.00 EUR/mês sem IVA" for storage in STORAGE_PRIORITIES}
+        with patch.object(pricing, "cached_prices", return_value=prices):
+            with patch("builtins.print") as printed:
+                self.assertEqual(monitor.main(["--list-prices"]), 0)
+        self.assertEqual(
+            [line.args[0].split(": ", 1)[0] for line in printed.call_args_list],
+            ["PREFERRED", "4 x 960 GB SATA SSD", "3 x 1 TB NVMe", "2 x 1.92 TB NVMe"],
+        )
+
     def test_correct_matching_and_preference_first(self):
         stocks = monitor.parse_stock(response("1H-low", "72H"))
         self.assertEqual(len(stocks), 2)

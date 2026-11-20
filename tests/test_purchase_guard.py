@@ -118,6 +118,13 @@ class PurchaseGuardTests(unittest.TestCase):
         ], policy()))
 
     def test_four_ks_le_6_disks_share_128gb_ram_and_rank_by_storage(self):
+        self.assertEqual(guard.STORAGE_PRIORITIES, (
+            "hybridsoftraid-2x4000sa-2x500nvme",
+            "softraid-4x960ssd",
+            "softraid-3x1000nvme",
+            "softraid-2x1920nvme",
+        ))
+        self.assertIs(guard.STORAGE_PRIORITIES, monitor.STORAGE_PRIORITIES)
         self.assertEqual(len(guard.APPROVED_FQNS), 4)
         self.assertEqual(guard.APPROVED_FQNS[0], guard.EXPECTED_FQN)
         self.assertTrue(all(fqn.startswith(
@@ -165,9 +172,9 @@ class PurchaseGuardTests(unittest.TestCase):
         ]
         report = guard.render_disk_preferences(items)
         self.assertIn("1. 2 x 512 GB NVMe + 2 x 4 TB HDD", report)
-        self.assertIn("2. 2 x 1.92 TB NVMe", report)
+        self.assertIn("2. 4 x 960 GB SATA SSD", report)
         self.assertIn("3. 3 x 1 TB NVMe", report)
-        self.assertIn("4. 4 x 960 GB SATA SSD", report)
+        self.assertIn("4. 2 x 1.92 TB NVMe", report)
         self.assertIn("FRA  1H-high", report)
         self.assertIn("Germany (FRA)", report)
         self.assertEqual(guard.DATACENTERS, monitor.ALLOWED_DATACENTERS)

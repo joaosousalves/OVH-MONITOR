@@ -30,6 +30,13 @@ from urllib.request import Request, urlopen
 
 PLAN_CODE = "27skle06-v1"
 PREFERRED_STORAGE = "hybridsoftraid-2x4000sa-2x500nvme"
+# One canonical purchase/display order, shared with the commercial guard.
+STORAGE_PRIORITIES = (
+    PREFERRED_STORAGE,          # 1. 2 x 512 GB NVMe + 2 x 4 TB HDD
+    "softraid-4x960ssd",       # 2. 4 x 960 GB SATA SSD
+    "softraid-3x1000nvme",     # 3. 3 x 1 TB NVMe
+    "softraid-2x1920nvme",     # 4. 2 x 1.92 TB NVMe
+)
 PRODUCT_URL = "https://eco.ovhcloud.com/pt/kimsufi/ks-le-6/"
 API_URL = "https://api.eu.ovhcloud.com/v1/dedicated/server/datacenter/availabilities"
 STORAGE_NAMES = {
@@ -189,7 +196,9 @@ def parse_stock(payload: Any, plan_code: str = PLAN_CODE) -> list[Stock]:
 
 
 def stock_sort_key(stock: Stock) -> tuple[int, str, str]:
-    return (not stock.preferred, stock.storage, stock.datacenter)
+    priority = (STORAGE_PRIORITIES.index(stock.storage)
+                if stock.storage in STORAGE_PRIORITIES else len(STORAGE_PRIORITIES))
+    return (priority, stock.storage, stock.datacenter)
 
 
 def state_path() -> Path:
@@ -650,7 +659,14 @@ def main(argv: list[str] | None = None) -> int:
             from pricing import cached_prices
             prices = cached_prices(state_path().with_name("pricing-cache.json"))
             if prices:
-                for storage, value in sorted(prices.items()):
+                for storage, value in sorted(
+                    prices.items(),
+                    key=lambda pair: (
+                        STORAGE_PRIORITIES.index(pair[0])
+                        if pair[0] in STORAGE_PRIORITIES else len(STORAGE_PRIORITIES),
+                        pair[0],
+                    ),
+                ):
                     print(f"{STORAGE_NAMES.get(storage, storage)}: {value}")
             else:
                 print("Sem preços de catálogo verificados; consultar o checkout OVHcloud.")

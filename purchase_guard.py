@@ -25,6 +25,7 @@ from typing import Mapping, Any
 from ksle_monitor import (
     APITransientError, MonitorError, Stock, retrieve_stock, PLAN_CODE,
     PREFERRED_STORAGE, REQUIRED_MEMORY, ALLOWED_DATACENTERS,
+    STORAGE_PRIORITIES as MONITOR_STORAGE_PRIORITIES,
 )
 from order_probe import (
     OrderProbeError, OVHCartClient, test_order, verify_available_test_fqn,
@@ -37,12 +38,7 @@ LOG = logging.getLogger("ksle-purchase-preview")
 # All four exact 128 GB disk layouts are approved as future purchase
 # preferences by the owner. This does NOT enable live checkout/payment.
 RAM_CODE = REQUIRED_MEMORY
-STORAGE_PRIORITIES = (
-    "hybridsoftraid-2x4000sa-2x500nvme",  # 2 x 512 GB NVMe + 2 x 4 TB HDD
-    "softraid-2x1920nvme",                # 2 x 1.92 TB NVMe
-    "softraid-3x1000nvme",                # 3 x 1 TB NVMe
-    "softraid-4x960ssd",                  # 4 x 960 GB SATA SSD
-)
+STORAGE_PRIORITIES = MONITOR_STORAGE_PRIORITIES
 APPROVED_FQNS = tuple(f"{PLAN_CODE}.{RAM_CODE}.{storage}"
                       for storage in STORAGE_PRIORITIES)
 EXPECTED_FQN = APPROVED_FQNS[0]  # Backward-compatible original preference.
@@ -434,9 +430,9 @@ def render_disk_preferences(stocks: list[Stock]) -> str:
         raise PurchaseSafetyError("No KS-LE-6 stock records; availability unknown")
     headings = {
         STORAGE_PRIORITIES[0]: "2 x 512 GB NVMe + 2 x 4 TB HDD (existing first choice)",
-        STORAGE_PRIORITIES[1]: "2 x 1.92 TB NVMe",
+        STORAGE_PRIORITIES[1]: "4 x 960 GB SATA SSD",
         STORAGE_PRIORITIES[2]: "3 x 1 TB NVMe",
-        STORAGE_PRIORITIES[3]: "4 x 960 GB SATA SSD",
+        STORAGE_PRIORITIES[3]: "2 x 1.92 TB NVMe",
     }
     lines = [
         "KS-LE-6 / 128 GB RAM: disk preferences, highest priority first",
