@@ -18,6 +18,9 @@ from auto_buy_guard import PurchaseEvidence, assess_auto_buy
 from commitment_guard import CommitmentSafetyError, inspect_commitment
 from ksle_monitor import APITransientError, MonitorError, Stock, retrieve_stock
 from order_probe import OVHCartClient, OrderProbeError, test_order, verify_available_test_fqn
+from payment_evidence import (
+    PaymentEvidence, describe_cart_contracts, inspect_payment_evidence,
+)
 from pending_orders import PendingOrderInventory, PendingOrdersError, reconcile_pending_orders
 from purchase_guard import (
     DEFAULT_JOURNAL, OrderJournal, PurchasePolicy, PurchaseSafetyError,
@@ -113,7 +116,9 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
                      client: OVHCartClient | None, journal: OrderJournal,
                      quota: PurchaseQuota,
                      pending_check: Callable[[OVHCartClient, int], PendingOrderInventory]
-                     = reconcile_pending_orders) -> str:
+                     = reconcile_pending_orders,
+                     payment_check: Callable[[OVHCartClient], PaymentEvidence]
+                     = inspect_payment_evidence) -> str:
     """One candidate, one bounded remote scan, one temporary cart, no order."""
     if policy.enabled:
         raise PurchaseSafetyError("Live checkout is not authorized")
@@ -142,6 +147,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
 
     def check_quote(quote: Any) -> None:
         results["initial"] = validate_initial_price(quote, policy.max_total_eur)
+        results["contracts"] = describe_cart_contracts(quote)
         try:
             results["zero_commitment"] = inspect_commitment(quote)
         except CommitmentSafetyError as exc:
@@ -165,6 +171,9 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
     if "initial" not in results or "renewal" not in results or "gross_renewal" not in results:
         raise PurchaseSafetyError("Incomplete temporary cart commercial evidence")
     _local_guard(journal, quota, policy.max_servers)
+    payment = payment_check(client)
+    if not isinstance(payment, PaymentEvidence):
+        raise PurchaseSafetyError("Unrecognized read-only payment verification result")
 
     initial: InitialPrice = results["initial"]
     renewal = results["renewal"]
@@ -221,6 +230,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         f"(cap {policy.max_total_eur:.2f} EUR, all cart charges included). "
         "Separate installation fee NOT itemized/verified. "
         + monthly + renewal.summary() + " " + commitment
+        + results["contracts"] + " " + payment.summary() + " "
         + f"Remote service + open order count {remote.upper_bound}/"
         f"{policy.max_servers}. Checkout/payment remain DISABLED. "
         + auto_buy_status

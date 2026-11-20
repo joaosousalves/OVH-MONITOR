@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import commercial_audit as audit
 import ksle_monitor as monitor
+from payment_evidence import PaymentEvidence
 from account_reconciliation import AccountInventory
 from order_probe import OVHCartClient, OrderProbeError
 from pending_orders import PendingOrderInventory, PendingOrdersError
@@ -84,22 +85,27 @@ class CommercialAuditTests(unittest.TestCase):
         self.journal = OrderJournal(root / "intent.json")
         self.quota = PurchaseQuota(root / "purchases-v2.json")
 
-    def run_audit(self, *, stocks=None, pending_check=None, client=None):
+    def run_audit(self, *, stocks=None, pending_check=None, client=None,
+                  payment_check=None):
         return audit.audit_commercial(
             policy(), stocks=stocks if stocks is not None else [stock()],
             client=client if client is not None else object(),
             journal=self.journal, quota=self.quota,
             pending_check=pending_check or (lambda _client, _limit: inventory()),
+            payment_check=payment_check or (lambda _client: PaymentEvidence("VALID_DEFAULT")),
         )
 
     def test_no_stock_skips_account_and_cart(self):
         account = Mock(side_effect=AssertionError("Unexpected account call"))
+        payment = Mock(side_effect=AssertionError("Unexpected payment call"))
         with patch.object(audit, "test_order") as cart:
             result = self.run_audit(
                 stocks=[stock(status="unavailable")], pending_check=account, client=None,
+                payment_check=payment,
             )
         self.assertIn("WAITING", result)
         account.assert_not_called()
+        payment.assert_not_called()
         cart.assert_not_called()
 
     def test_eligible_stock_reports_initial_vat_and_unverified_monthly(self):
@@ -114,11 +120,41 @@ class CommercialAuditTests(unittest.TestCase):
         self.assertIn("final monthly renewal including VAT not verified", report)
         self.assertIn("contractual freedom from 12/24-month commitment not verified", report)
         self.assertIn("eligible payment method not verified", report)
+        self.assertIn("READ-ONLY PAYMENT: default VALID one-click method found", report)
+        self.assertIn("order-specific payment eligibility", report)
         self.assertIn("0/2", report)
         self.assertIn("Checkout/payment remain DISABLED", report)
         self.assertEqual(self.quota.read(), [])
         self.assertFalse(self.journal.path.exists())
         self.assertEqual(cart.call_count, 1)
+
+    def test_no_default_method_is_reported_but_not_concealed(self):
+        with patch.object(audit, "verify_available_test_fqn"):
+            with patch.object(audit, "test_order", side_effect=fake_cart()):
+                report = self.run_audit(
+                    payment_check=lambda _client: PaymentEvidence("NO_METHOD"),
+                )
+        self.assertIn("PAYMENT NOT READY: no saved payment method", report)
+        self.assertIn("AUTO-BUY BLOCKED", report)
+
+    def test_payment_api_denied_is_unverified_not_approved(self):
+        with patch.object(audit, "verify_available_test_fqn"):
+            with patch.object(audit, "test_order", side_effect=fake_cart()):
+                report = self.run_audit(
+                    payment_check=lambda _client: PaymentEvidence("API_UNVERIFIED"),
+                )
+        self.assertIn("PAYMENT UNVERIFIED", report)
+        self.assertIn("AUTO-BUY BLOCKED", report)
+
+    def test_contract_references_reported_without_claiming_no_commitment(self):
+        quote_data = quote(commitment="P0M")
+        quote_data["contracts"] = [{"name": "conditions", "url": "https://example.test/private-token"}]
+        with patch.object(audit, "verify_available_test_fqn"):
+            with patch.object(audit, "test_order", side_effect=fake_cart(quote_data)):
+                report = self.run_audit()
+        self.assertIn("CONTRACT REVIEW REQUIRED: 1 contract reference(s)", report)
+        self.assertNotIn("private-token", report)
+        self.assertIn("zero commitment NOT VERIFIED", report)
 
     def test_quote_vat_mismatch_fails_closed(self):
         for net, vat, gross in (("40.00", "9.19", "49.20"), ("40.00", "9.21", "49.20")):

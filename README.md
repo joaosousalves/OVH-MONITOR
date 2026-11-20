@@ -1040,6 +1040,48 @@ monitor or watcher. If real automatic purchasing is later explicitly
 authorized, that will require a separate implementation, transaction-safe
 idempotency, proof of the conditions above, and its own end-to-end safeguards.
 
+## Phase L — read-only payment and contract evidence in commercial emails
+
+When live stock finally permits a temporary cart quote, Phase I / Phase J
+now inspect additional **non-billable** evidence before sending the audit
+report:
+
+- Existing `GET /me/payment/method` and `GET /me/payment/method/{id}` calls
+  check for **one default `VALID` one-click** method. Possible results are
+  `READ-ONLY PAYMENT` (method exists), `PAYMENT NOT READY` (none/invalid), or
+  `PAYMENT UNVERIFIED` (API failure or missing read rights). A failure to
+  find a method does **not suppress** the commercial alert: it is included
+  as a blocker, with no card data or payment-method identifiers printed.
+- The existing `GET /order/cart/{cartId}/checkout` quotation may contain
+  `contracts`. The report states only the **number** of contract references,
+  never their contents, URLs or tokens. Merely seeing a contract reference
+  or a `P1M` duration is **not proof of a commitment-free subscription**.
+
+A default card's `VALID` and `oneclick` flags **do not prove** that the card
+can pay a particular future KS-LE-6 order or that payment will succeed. OVH
+only supports its order-specific payment means query once a real order ID
+exists (`GET /me/order/{orderId}/availableRegisteredPaymentMean`). The
+commercial watcher deliberately creates **no such order**, so the future
+auto-buy gate still flags **payment eligibility unverified**, even if a saved
+default card is present. Do not grant additional order/payment POST rights.
+
+If desired, run the existing manual read-only payment diagnostic at any time
+without stock or a cart:
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ksle-payment-readiness \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --check-payment-readiness
+```
+
+If no method is registered, this command reports an error safely; it does
+not create one. To add a method, use the **OVHcloud Console** directly, not
+this monitor. The extra evidence in commercial emails is included
+automatically after `git pull` on the VPS; the systemd timer files and
+environment files do not need changing.
+
 ## Troubleshooting
 
 | Symptom | Check |
