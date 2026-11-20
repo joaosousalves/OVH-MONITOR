@@ -80,6 +80,33 @@ class AccountReconciliationTests(unittest.TestCase):
                 with self.assertRaisesRegex(OrderProbeError, "Blocked unsupported"):
                     client.request(method, path)
 
+    def test_hardware_specifications_read_only_is_allowlisted(self):
+        client = OVHCartClient("fake-bearer")
+        path = "/dedicated/server/ns1234567.ip-192-0-2.eu/specifications/hardware"
+        fake_reply = {"description": "KS-LE-6", "memorySize": {"value": 128, "unit": "GB"}}
+        from io import BytesIO
+        import json
+        with patch("order_probe.urlopen", return_value=BytesIO(json.dumps(fake_reply).encode())) as open_url:
+            self.assertEqual(client.request("GET", path), fake_reply)
+        self.assertEqual(open_url.call_count, 1)
+
+    def test_hardware_specifications_mutations_and_other_paths_blocked(self):
+        client = OVHCartClient("fake-bearer")
+        valid_path = "/dedicated/server/ns1234567.ip-192-0-2.eu/specifications/hardware"
+        with patch("order_probe.urlopen") as open_url:
+            for method, path in (
+                ("POST", valid_path),
+                ("PUT", valid_path),
+                ("DELETE", valid_path),
+                ("GET", "/dedicated/server/ns1234567.ip-192-0-2.eu"),
+                ("GET", "/dedicated/server/../specifications/hardware"),
+                ("GET", "/dedicated/server/ns1234567.ip-192-0-2.eu/reboot"),
+            ):
+                with self.subTest(method=method, path=path):
+                    with self.assertRaisesRegex(OrderProbeError, "Blocked unsupported"):
+                        client.request(method, path)
+            open_url.assert_not_called()
+
     def test_cli_manual_dispatch_never_calls_email(self):
         with patch("account_reconciliation.run_account_reconciliation", return_value=0) as run:
             with patch.object(monitor, "send_mail") as send:
