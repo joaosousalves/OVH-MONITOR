@@ -104,6 +104,23 @@ class MonitorTests(unittest.TestCase):
         self.assertIn(fqn, output.call_args.args[0])
         self.assertEqual(monitor.PLAN_CODE, "27skle06-v1")
 
+    def test_ks_le_2_stock_and_public_catalog_check_are_manual_only(self):
+        plan = "27skle02-v1"
+        fqn = plan + ".ram-32g-ddr3-ecc-1333.softraid-2x2000sa"
+        stocks = [monitor.Stock(fqn, "softraid-2x2000sa", "gra", "1H-low")]
+        with patch.object(monitor, "retrieve_stock", return_value=stocks) as fetch:
+            with patch("builtins.print") as output:
+                self.assertEqual(monitor.main(["--list-test-stock", "--test-plan", "ks-le-2"]), 0)
+        fetch.assert_called_once_with(plan_code=plan)
+        self.assertIn(fqn, output.call_args.args[0])
+        with patch("order_probe.run_check_test_config", return_value=0) as check:
+            self.assertEqual(monitor.main([
+                "--check-test-config", "--test-plan", "ks-le-2",
+                "--datacenter", "gra", "--test-fqn", fqn,
+            ]), 0)
+        check.assert_called_once_with("gra", "ks-le-2", fqn)
+        self.assertEqual(monitor.PLAN_CODE, "27skle06-v1")
+
     def test_non_orderable_statuses_are_not_available(self):
         for status in ["unavailable", "unknown", "comingSoon", "weird"]:
             with self.subTest(status=status):

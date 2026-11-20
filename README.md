@@ -279,6 +279,43 @@ addon plan code (which ends in `-27skle06-v1`).
 The test's last step is a **GET** request to `/order/cart/{cartId}/checkout`.
 No purchase endpoint is present anywhere in the test-order API client.
 
+### Diagnose a KS-LE-2 configuration with exact RAM and disks (never purchase)
+
+When a KS-LE-2 (`27skle02-v1`) is in stock, the **manual** diagnostic can
+check that its exact RAM and storage also exist in the PT Eco catalog before
+creating any temporary cart. This step was added because the stock API once
+showed KS-LE-3/64 GB availability while the PT catalog only offered 32 GB.
+Never silently substitute a catalog default for unavailable hardware.
+
+For the observed GRA / 32 GB / 2 × 2 TB SATA stock option, run the
+**read-only, unauthenticated** stock/catalog preflight first:
+
+```bash
+cd /opt/ovh-ksle-monitor
+python3 ksle_monitor.py --check-test-config \
+  --test-plan ks-le-2 --datacenter gra \
+  --test-fqn '27skle02-v1.ram-32g-ddr3-ecc-1333.softraid-2x2000sa'
+```
+
+This checks the current stock status and validates the exact addon codes in
+the live PT catalog. It creates no cart and requires no API credentials. Only
+if it prints `PUBLIC PREFLIGHT OK`, run the optional temporary-cart quote:
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ksle2-cart-diagnostic \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --test-order --test-plan ks-le-2 --datacenter gra \
+  --test-fqn '27skle02-v1.ram-32g-ddr3-ecc-1333.softraid-2x2000sa'
+```
+
+The cart flow repeats the live-stock check, selects the exact addons,
+accepts only `P1M`/default, reads a GET quote and attempts cart deletion.
+Stock can disappear between preflight and quote. Checkout and payment remain
+disabled. KS-LE-2 does not count toward the KS-LE-6 two-server cap and is
+**never** considered for KS-LE-6 monitoring, alerting or purchase.
+
 ### Diagnose a KS-LE-3 cart with real stock (never purchase)
 
 As a separate manual diagnostic, the monitor can now inspect an **available

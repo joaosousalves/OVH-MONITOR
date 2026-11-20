@@ -31,8 +31,12 @@ PLAN_CODE = "27skle06-v1"
 TEST_PLANS = {
     "ks-le-6": PLAN_CODE,
     "ks-le-1": "27skle01-v1",
+    "ks-le-2": "27skle02-v1",
     "ks-le-3": "27skle03-v1",
 }
+# These alternate models are ONLY for manual, stock-gated diagnostics. They
+# must never enter the monitored/purchase product filter or quota.
+EXACT_FQN_TEST_PLANS = {TEST_PLANS["ks-le-2"], TEST_PLANS["ks-le-3"]}
 PREFERRED_STORAGE_OPTION = "hybridsoftraid-2x4000sa-2x500nvme-27skle06-v1"
 DATACENTERS = {"bhs", "fra", "gra", "lon", "rbx", "sbg", "waw"}
 LOGGER = logging.getLogger("ksle-order-probe")
@@ -419,8 +423,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
 
     if plan_code not in TEST_PLANS.values():
         raise OrderProbeError("Unsupported cart-test product")
-    if plan_code == TEST_PLANS["ks-le-3"] and target_fqn is None:
-        raise OrderProbeError("KS-LE-3 diagnostic requires an exact --test-fqn")
+    if plan_code in EXACT_FQN_TEST_PLANS and target_fqn is None:
+        raise OrderProbeError("Alternate-model diagnostic requires an exact --test-fqn")
     if target_fqn is not None:
         parse_hardware_fqn(target_fqn, plan_code)
         # The CLI converts its default --storage preferred to the
@@ -545,11 +549,10 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
     if test_plan not in TEST_PLANS:
         LOGGER.error("Unsupported test product: %s", test_plan)
         return 1
-    # KS-LE-3 is only a diagnostic probe, never a monitored or purchasable
-    # target. Require a concrete, freshly rechecked stock match before any
-    # authenticated cart mutation, instead of guessing a catalog default.
-    if test_plan == "ks-le-3" and target_fqn is None:
-        LOGGER.error("KS-LE-3 diagnostic requires --test-fqn from --list-test-stock; no cart created")
+    # KS-LE-2/3 are diagnostics only. Never guess their default hardware
+    # configuration or create a cart without a fresh, exact stock match.
+    if TEST_PLANS[test_plan] in EXACT_FQN_TEST_PLANS and target_fqn is None:
+        LOGGER.error("Alternate-model diagnostic requires --test-fqn from --list-test-stock; no cart created")
         return 1
     storage_code = PREFERRED_STORAGE_OPTION if storage == "preferred" else storage
     try:
@@ -565,3 +568,36 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
     except OrderProbeError as exc:
         LOGGER.error("Test-order failed (no purchase was made): %s", exc)
         return 1
+
+
+def run_check_test_config(datacenter: str, test_plan: str,
+                          target_fqn: str | None) -> int:
+    """No credentials or cart: check exact stock FQN against PT Eco addons."""
+    if test_plan not in TEST_PLANS or target_fqn is None:
+        LOGGER.error("Specify an approved --test-plan and exact --test-fqn; no cart created")
+        return 1
+    plan_code = TEST_PLANS[test_plan]
+    datacenter = datacenter.lower()
+    if datacenter not in DATACENTERS:
+        LOGGER.error("Unsupported datacenter: %s", datacenter)
+        return 1
+    try:
+        verify_available_test_fqn(plan_code, target_fqn, datacenter)
+        # Public, unauthenticated GET; reuse the same PT catalog as pricing.
+        from pricing import fetch_catalog
+        catalog = fetch_catalog()
+        _, addons = catalog_selection(catalog, "default", datacenter,
+                                      plan_code, target_fqn=target_fqn)
+    except OrderProbeError as exc:
+        LOGGER.error("NOT ELIGIBLE for manual cart diagnostic: %s; no cart created", exc)
+        return 1
+    except (OSError, ValueError) as exc:
+        LOGGER.error("Public catalog unavailable (%s); no cart created", type(exc).__name__)
+        return 1
+    print(
+        f"PUBLIC PREFLIGHT OK: {plan_code} {datacenter.upper()} {target_fqn}; "
+        f"{len(addons)} mandatory addon(s) matched. "
+        "No cart, order, payment or reservation. "
+        "A live cart quotation may still fail."
+    )
+    return 0
