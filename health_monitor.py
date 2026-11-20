@@ -20,6 +20,10 @@ LOG = logging.getLogger("ksle-health")
 DEFAULT_HEALTH_PATH = "/var/lib/ovh-ksle-health/health-state.json"
 DEFAULT_STOCK_HEARTBEAT = "/var/lib/ovh-ksle-monitor/health-heartbeat.json"
 DEFAULT_COMMERCIAL_HEARTBEAT = "/var/lib/ovh-ksle-purchase/commercial-heartbeat.json"
+# With systemd DynamicUser=yes, StateDirectory=/var/lib/<name> may be a
+# systemd-owned symlink to /var/lib/private/<name>. That specific link is
+# intentional; unrelated symlinked state directories remain forbidden.
+SYSTEMD_STATE_ROOT = Path("/var/lib")
 # Ordinary OVH 429 backoffs can last 15 minutes; only alert when substantially
 # longer than a normal cooldown. Commercial checks are scheduled every 5 min.
 STOCK_MAX_AGE_SECONDS = 1800
@@ -29,6 +33,24 @@ STARTUP_GRACE_SECONDS = 2400
 
 class HealthError(Exception):
     """Corrupt/unsafe health state or heartbeat; fail closed."""
+
+
+def _systemd_private_state_alias(directory: Path) -> bool:
+    """Allow only systemd's exact /var/lib/<name> -> private/<name> link.
+
+    Check the link's text rather than resolving it: DynamicUser may not be
+    permitted to traverse /var/lib/private in its service namespace.
+    """
+    if directory.parent != SYSTEMD_STATE_ROOT or not directory.name:
+        return False
+    try:
+        target = directory.readlink()
+    except OSError:
+        return False
+    return target in (
+        Path("private") / directory.name,
+        SYSTEMD_STATE_ROOT / "private" / directory.name,
+    )
 
 
 def _read_private_json(path: Path) -> dict | None:
@@ -53,8 +75,10 @@ def _read_private_json(path: Path) -> dict | None:
 
 def _atomic_private_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if path.parent.is_symlink() or not path.parent.is_dir():
-        raise HealthError("Health directory is not a directory")
+    if (not path.parent.is_dir() or
+            (path.parent.is_symlink() and
+             not _systemd_private_state_alias(path.parent))):
+        raise HealthError("Unsafe health directory (only systemd StateDirectory aliases are allowed)")
     if path.is_symlink():
         raise HealthError("Refusing to overwrite a symlink")
     temp = None

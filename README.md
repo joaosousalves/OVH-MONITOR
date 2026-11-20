@@ -1157,6 +1157,16 @@ is required. If you changed the stock/commercial journal directories,
 explicitly set `OVH_STOCK_HEARTBEAT` and `OVH_COMMERCIAL_HEARTBEAT` in the
 health service environment to point to the real heartbeat files.
 
+For the stock timer's `DynamicUser=yes` service, systemd can present
+`/var/lib/ovh-ksle-monitor` as a managed symbolic link to
+`/var/lib/private/ovh-ksle-monitor`. The heartbeat writer explicitly allows
+this **exact systemd-managed directory alias** while rejecting unrelated
+symlinks. After upgrading a version that logged
+`Cannot record stock health heartbeat: Health directory is not a directory`,
+run `sudo systemctl start ovh-ksle-monitor.service` and check its journal;
+no systemd restart or state-file deletion is required. Once the heartbeat is
+current, the next scheduled health check sends one recovery notification.
+
 For an SMTP error with an **uncertain delivery outcome**, the watchdog keeps
 `sending` in its private journal and refuses to send another health email
 until a human investigates; inspect with `--health-status` and the unit

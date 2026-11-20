@@ -111,6 +111,29 @@ class HealthMonitorTests(unittest.TestCase):
         with self.assertRaisesRegex(health.HealthError, "Unsafe symlink"):
             health.read_heartbeat(linked)
 
+    def test_dynamic_user_systemd_state_directory_symlink_supported(self):
+        """Regression: systemd uses /var/lib/<name> -> private/<name>."""
+        state_root = self.stock.parent.parent / "var" / "lib"
+        real = state_root / "private" / "ovh-ksle-monitor"
+        real.mkdir(mode=0o700, parents=True)
+        alias = state_root / "ovh-ksle-monitor"
+        alias.symlink_to(Path("private") / "ovh-ksle-monitor", target_is_directory=True)
+        with patch.object(health, "SYSTEMD_STATE_ROOT", state_root):
+            file = alias / "health-heartbeat.json"
+            health.record_heartbeat(file, now=1234)
+            self.assertEqual(health.read_heartbeat(file), 1234)
+            self.assertEqual((real / "health-heartbeat.json").stat().st_mode & 0o777, 0o600)
+
+    def test_unrelated_symlinked_directory_stays_blocked(self):
+        root = self.stock.parent.parent
+        target = root / "other-directory"
+        target.mkdir()
+        alias = root / "alias"
+        alias.symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(health.HealthError, "Unsafe health directory"):
+            health.record_heartbeat(alias / "health-heartbeat.json", now=1234)
+        self.assertFalse((target / "health-heartbeat.json").exists())
+
     def test_monitor_records_only_completed_real_polls(self):
         path = self.stock.parent / "alert-state.json"
         config = monitor.MailConfig("", 0, "", "", "", "", ())
