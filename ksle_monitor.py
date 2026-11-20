@@ -512,6 +512,13 @@ def run_once(stocks: list[Stock], path: Path, config: MailConfig | None, dry_run
         LOGGER.info("Sent one alert email for %d newly available option(s)", len(new))
     if retained != previous:
         save_alerted(path, retained)
+    # A heartbeat is evidence of a fully processed real poll. Never write it
+    # on --check, a failed SMTP send, or while API 429 cooldown suppresses polls.
+    from health_monitor import HealthError, record_heartbeat
+    try:
+        record_heartbeat(path.with_name("health-heartbeat.json"))
+    except HealthError as exc:
+        raise MonitorError(f"Cannot record stock health heartbeat: {exc}") from exc
     return 0
 
 
@@ -549,6 +556,12 @@ def main(argv: list[str] | None = None) -> int:
                        help="Opt-in commercial audit watcher: stock edge, cooldown, persistent email deduplication")
     group.add_argument("--commercial-watch-status", action="store_true",
                        help="Read-only commercial watcher state, no stock or email")
+    group.add_argument("--health-check", action="store_true",
+                       help="Independent stock/commercial heartbeat watchdog; transition-only email")
+    group.add_argument("--health-status", action="store_true",
+                       help="Read local watchdog status only; no SMTP or OVH API")
+    group.add_argument("--simulate-restock-flow", action="store_true",
+                       help="Fully offline restock-to-commercial-email simulation (NO API, SMTP, checkout)")
     group.add_argument("--reconcile-account", action="store_true",
                        help="GET-only KS-LE-6 service inventory against 2-server limit; no cart/order")
     group.add_argument("--reconcile-pending-orders", action="store_true",
@@ -611,6 +624,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.commercial_watch_status:
             from commercial_watch import run_commercial_watch_status
             return run_commercial_watch_status()
+        if args.health_check:
+            from health_monitor import run_health_check
+            return run_health_check()
+        if args.health_status:
+            from health_monitor import run_health_status
+            return run_health_status()
+        if args.simulate_restock_flow:
+            from integration_simulation import run_restock_simulation
+            return run_restock_simulation()
         if args.list_test_stock:
             from order_probe import TEST_PLANS
             plan_code = TEST_PLANS[args.test_plan]

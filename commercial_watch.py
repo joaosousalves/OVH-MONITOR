@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from account_reconciliation import AccountReconciliationError
 from commercial_audit import audit_commercial
+from health_monitor import HealthError, record_heartbeat
 from ksle_monitor import (
     APITransientError, MonitorError, Stock, PRODUCT_URL,
     api_cooldown_active, apply_api_failure, eligible_alert_stock,
@@ -277,9 +278,11 @@ def run_commercial_watch() -> int:
             policy, stocks=stocks, path=watch_path,
             audit=perform_audit, notify=mail_result,
         )
+        if result.startswith(("WAITING:", "UNCHANGED:", "SENT:")):
+            record_heartbeat(watch_path.with_name("commercial-heartbeat.json"))
         LOG.info(result)
         return 0
-    except (WatchStateError, PurchaseSafetyError, MonitorError, OrderProbeError,
+    except (WatchStateError, HealthError, PurchaseSafetyError, MonitorError, OrderProbeError,
             ValueError, TypeError, OSError) as exc:
         LOG.error("Commercial watcher stopped safely (no purchase): %s", exc)
         return 1

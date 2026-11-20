@@ -1,0 +1,12 @@
+[Unit]
+Description=Check KS-LE-6 stock and commercial watcher health every 5 minutes
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=5min
+AccuracySec=1min
+Persistent=true
+Unit=ovh-ksle-health.service
+
+[Install]
+WantedBy=timers.target

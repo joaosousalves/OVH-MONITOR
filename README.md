@@ -1082,6 +1082,96 @@ this monitor. The extra evidence in commercial emails is included
 automatically after `git pull` on the VPS; the systemd timer files and
 environment files do not need changing.
 
+## Phase M — fully offline restock rehearsal and independent health alerts
+
+### One-command end-to-end simulation (NO OVH account/API, SMTP or order)
+
+After updating the Python files, run:
+
+```bash
+python3 /opt/ovh-ksle-monitor/ksle_monitor.py --simulate-restock-flow
+```
+
+This uses an isolated temporary directory, synthetic OVH stock and cart
+responses, and in-memory mock email delivery. It exercises the **actual**
+monitoring, disk ranking, commercial audit, persistent deduplication and
+pure auto-buy guard code, showing the following fake sequence:
+
+1. No stock → zero notifications;
+2. second-priority disks in FRA become available → one stock alert and one
+   commercial audit notification;
+3. repeated stock → no duplicated notifications;
+4. preferred disks in BHS become available → two more fake notifications;
+5. account already has 2/2 servers → audit stops before any cart;
+6. monthly quote of 38 EUR, initial quote of 81 EUR, or unknown final
+   monthly charge → purchasing decision blocked.
+
+All illustrative prices are **fabricated test inputs**, not verified live
+OVHcloud prices. Nothing is sent, purchased, or billed. The standalone command
+never even loads live OVH credentials. Run the entire offline suite with
+`python3 -m unittest discover -s tests -q`.
+
+### Optional health watchdog for stopped/failing timers
+
+The regular stock monitor and the commercial watcher now write separate
+private timestamps **only after successful real polling runs**. Normal
+`--check`, API 429 cooldown, failed SMTP, or incomplete commercial audit do
+not falsify these heartbeats. A third, independent timer checks them every
+five minutes and sends an **email on each change** to or from a degraded
+condition (no repeated warning every five minutes):
+
+- stock successful-poll heartbeat older than **30 minutes**;
+- commercial-watcher heartbeat older than **40 minutes**;
+- either missing beyond the **40-minute startup grace**;
+- unreadable/malformed/insecure heartbeat, or implausible future timestamp.
+
+This is intentionally tolerant of typical API backoff: a short OVH 429
+pause does not immediately trigger a false failure alarm. Real stock alerts
+still go out on the existing 30-second service. Health emails contain no
+OVH account data or credentials and are **not** stock notifications.
+
+Install on Ubuntu **after** `git pull` (do not replace your existing `.env`
+files or change the original two timers):
+
+```bash
+sudo git -C /opt/ovh-ksle-monitor pull --ff-only
+sudo install -m 0644 /opt/ovh-ksle-monitor/systemd/ovh-ksle-health.service /etc/systemd/system/
+sudo install -m 0644 /opt/ovh-ksle-monitor/systemd/ovh-ksle-health.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ovh-ksle-health.timer
+sudo systemctl list-timers 'ovh-ksle-*'
+sudo journalctl -u ovh-ksle-health.service -n 30 --no-pager
+```
+
+To run the first health check manually and inspect its local state:
+
+```bash
+sudo systemctl start ovh-ksle-health.service
+sudo python3 /opt/ovh-ksle-monitor/ksle_monitor.py --health-status
+```
+
+The checker reads the SMTP values from your existing
+`/etc/ovh-ksle-monitor.env` and stores its own notification journal in
+`/var/lib/ovh-ksle-health/health-state.json`. No extra OVH API permission
+is required. If you changed the stock/commercial journal directories,
+explicitly set `OVH_STOCK_HEARTBEAT` and `OVH_COMMERCIAL_HEARTBEAT` in the
+health service environment to point to the real heartbeat files.
+
+For an SMTP error with an **uncertain delivery outcome**, the watchdog keeps
+`sending` in its private journal and refuses to send another health email
+until a human investigates; inspect with `--health-status` and the unit
+logs. Do not delete or reset that file blindly: an SMTP timeout can mean
+the recipient already received the message. This protects against duplicate
+incident email, at the cost of requiring intervention after ambiguity.
+
+**Safety remains unchanged:** `OVH_AUTO_BUY_ENABLED=false`; no checkout or
+payment endpoint is implemented. The €80 initial and €37 monthly ceilings,
+2-server quota and zero-commitment requirement are conservative blockers,
+not a guarantee that an unknown future OVH price is within budget. When
+monthly VAT-inclusive renewal or contract terms cannot be independently
+verified, the guard **blocks** purchase; it never assumes an unknown price
+is cheap enough.
+
 ## Troubleshooting
 
 | Symptom | Check |
