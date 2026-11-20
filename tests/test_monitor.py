@@ -291,6 +291,7 @@ class MonitorTests(unittest.TestCase):
         self.assertIn("42.00 EUR/mês sem IVA", html)
         self.assertIn("51.66 EUR/mês com IVA de 23%", plain)
         self.assertIn("51.66 EUR/mês com IVA de 23%", html)
+        self.assertIn("~84.86 EUR primeiro pagamento com IVA", plain)
         self.assertIn("NÃO é cotação final", plain)
         self.assertIn("Preço indisponível", html)
         self.assertIn("Preço de catálogo indisponível", plain)

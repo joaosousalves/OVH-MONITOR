@@ -37,17 +37,20 @@ def fixture():
 class PriceTests(unittest.TestCase):
     def test_portugal_vat_estimates_for_all_four_real_catalog_samples(self):
         examples = {
-            "26.99": "33.20",
-            "27.99": "34.43",
-            "28.99": "35.66",
-            "29.99": "36.89",
+            "26.99": ("33.20", "66.40"),
+            "27.99": ("34.43", "67.63"),
+            "28.99": ("35.66", "68.86"),
+            "29.99": ("36.89", "70.09"),
         }
-        for net, expected in examples.items():
+        for net, (expected, first) in examples.items():
             with self.subTest(net=net):
                 raw = f"{net} EUR/mês sem IVA (estimativa de catálogo)"
                 self.assertEqual(str(pricing.indicative_pt_vat_gross(raw)), expected)
+                self.assertEqual(str(pricing.indicative_initial_total(raw)), first)
                 shown = pricing.annotate_pt_vat_estimate(raw)
                 self.assertIn(f"{expected} EUR/mês com IVA de 23%", shown)
+                self.assertIn(f"~{first} EUR primeiro pagamento com IVA", shown)
+                self.assertIn("instalação base anunciada", shown)
                 self.assertIn("NÃO é cotação final", shown)
 
     def test_vat_rounding_and_unverified_catalog_values(self):
@@ -63,6 +66,7 @@ class PriceTests(unittest.TestCase):
         for value in bad:
             with self.subTest(value=value):
                 self.assertIsNone(pricing.indicative_pt_vat_gross(value))
+                self.assertIsNone(pricing.indicative_initial_total(value))
                 self.assertEqual(pricing.annotate_pt_vat_estimate(value), value)
 
     def test_complete_price_without_tax(self):

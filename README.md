@@ -1278,6 +1278,43 @@ python3 -m unittest discover -s tests -q
 python3 ksle_monitor.py --list-prices
 ```
 
+## Phase Q — indicative initial charge: one month plus 26.99 EUR setup
+
+The owner confirmed choosing the **without-commitment** monthly option for
+the KS-LE-6. The OVHcloud Eco PT public listing also advertises a **26.99 EUR
++ VAT base installation fee** for this model. The 12/24-month prepayment
+promotions are NOT selected or used to calculate the reference price.
+
+`--list-prices` and new stock-alert emails now display an **illustrative**
+first payment: one month at the current monthly catalog price, plus the
+published base setup fee, each converted to 23% VAT and rounded to EUR cents.
+With the owner's 20 November 2026 catalog snapshot:
+
+| Rank | Monthly incl. VAT (estimate) | Setup incl. VAT (base estimate) | First payment incl. VAT (estimate) | Margin under 80 EUR |
+| --- | ---: | ---: | ---: | ---: |
+| 1. 2 × 512 GB NVMe + 2 × 4 TB HDD | 33.20 EUR | 33.20 EUR | **66.40 EUR** | 13.60 EUR |
+| 2. 4 × 960 GB SATA SSD | 34.43 EUR | 33.20 EUR | **67.63 EUR** | 12.37 EUR |
+| 3. 3 × 1 TB NVMe | 35.66 EUR | 33.20 EUR | **68.86 EUR** | 11.14 EUR |
+| 4. 2 × 1.92 TB NVMe | 36.89 EUR | 33.20 EUR | **70.09 EUR** | 9.91 EUR |
+
+These values assume the same base installation fee applies to every disk
+layout, that exactly one month is invoiced in advance and that no other
+charges apply. **Neither assumption is guaranteed by the public catalog.**
+If OVHcloud changes the offer, taxes, selected datacenter or setup fee, the
+figures may differ. The 37 EUR recurring and 80 EUR initial ceilings are
+still tested against actual eligible cart evidence, never these estimates.
+
+The owner's observation that the monthly catalog offer is **sem compromisso**
+is recorded as a preference; it is not automatically upgraded to verified
+legal contract evidence. `P1M` means the billing duration, not necessarily
+absence of a 12/24-month contractual obligation. When stock becomes
+available, the commercial audit still needs an authoritative quote and
+contract validation. The real **checkout and all payment actions remain
+disabled** (`OVH_AUTO_BUY_ENABLED=false`).
+
+No new API rights or systemd services are required. After updating, run
+`python3 ksle_monitor.py --list-prices` to inspect the revised estimates.
+
 ## Troubleshooting
 
 | Symptom | Check |

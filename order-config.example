@@ -52,6 +52,9 @@ OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 # 3. 3x1TB NVMe
 # 4. 2x1.92TB NVMe
 # Catalog --list-prices and stock email show a 23% PT mainland IVA estimate.
+# They also display a hypothetical first payment (1 month + published
+# KS-LE-6 base installation fee of EUR 26.99 ex-VAT). This may vary by
+# disk choice, customer and offer; the actual cart must recheck it.
 # This VAT calculation is illustrative only, never a final OVH quote or
 # a verified month-to-month commitment-free subscription price.
 # OVH_AUTO_BUY_ALLOWED_DATACENTERS must contain only:

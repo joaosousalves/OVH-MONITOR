@@ -23,6 +23,9 @@ RETRY_SECONDS = 3600  # Avoid hammering catalog on failure.
 CACHE_SCHEMA_VERSION = 2  # Invalidate pre-fix cache entries with zero parsed prices.
 LOG = logging.getLogger("ksle-monitor")
 PT_MAINLAND_VAT_RATE = Decimal("0.23")
+# Publicly advertised KS-LE-6 base installation fee (Eco PT catalogue,
+# checked 2026-11-20). Not a configuration-specific or final checkout charge.
+INDICATIVE_SETUP_FEE_NET = Decimal("26.99")
 _CATALOG_EUR = re.compile(
     r"^(0|[1-9][0-9]{0,5})\.([0-9]{2}) EUR/mês sem IVA \(estimativa de catálogo\)$"
 )
@@ -47,14 +50,33 @@ def indicative_pt_vat_gross(description: str) -> Decimal | None:
     )
 
 
+def indicative_initial_total(description: str) -> Decimal | None:
+    """Illustrative first month + published base setup fee, not an order quote.
+
+    Calculation assumes a single month's recurring payment at checkout and
+    the advertised base installation fee without any per-layout adjustment.
+    Actual fees, discounts and taxes must be obtained from the real cart.
+    """
+    gross_monthly = indicative_pt_vat_gross(description)
+    if gross_monthly is None:
+        return None
+    gross_setup = (INDICATIVE_SETUP_FEE_NET * (
+        Decimal("1.00") + PT_MAINLAND_VAT_RATE
+    )).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return gross_monthly + gross_setup
+
+
 def annotate_pt_vat_estimate(description: str) -> str:
     """Add a prominently qualified VAT estimate; keep original cache intact."""
     gross = indicative_pt_vat_gross(description)
     if gross is None:
         return description
+    initial = indicative_initial_total(description)
     return (
         f"{description} | {gross:.2f} EUR/mês com IVA de 23% "
-        "(simulação fiscal; NÃO é cotação final nem prova de sem compromisso)"
+        f"| ~{initial:.2f} EUR primeiro pagamento com IVA (1 mês + "
+        "instalação base anunciada de 26.99 EUR sem IVA; sem extras) "
+        "(estimativas; NÃO é cotação final nem prova de sem compromisso)"
     )
 
 
