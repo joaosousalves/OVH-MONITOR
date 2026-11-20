@@ -116,6 +116,8 @@ class CommercialAuditTests(unittest.TestCase):
         self.assertIn("MONTHLY WITH VAT UNVERIFIED", report)
         self.assertIn("Separate installation fee NOT itemized/verified", report)
         self.assertIn("Zero-commitment indicator observed, but legal terms NOT VERIFIED", report)
+        self.assertIn("OWNER-CONFIRMED PRICE COMPARISON", report)
+        self.assertIn("MONTHLY=UNVERIFIED", report)
         self.assertIn("AUTO-BUY BLOCKED (NO PURCHASE)", report)
         self.assertIn("final monthly renewal including VAT not verified", report)
         self.assertIn("contractual freedom from 12/24-month commitment not verified", report)
@@ -193,6 +195,7 @@ class CommercialAuditTests(unittest.TestCase):
             ))):
                 report = self.run_audit()
         self.assertIn("gross RENEW evidence 29.00 EUR <= 37.00 EUR", report)
+        self.assertIn("MONTHLY=NOT_ABOVE_REFERENCE", report)
         self.assertIn("final monthly invoice and future discounts NOT VERIFIED", report)
         self.assertIn("COMMERCIAL AUDIT PARTIAL", report)
 
@@ -203,6 +206,7 @@ class CommercialAuditTests(unittest.TestCase):
             ))):
                 report = self.run_audit()
         self.assertIn("MONTHLY PRICE WARNING", report)
+        self.assertIn("MONTHLY=ABOVE_CONFIRMED_REFERENCE", report)
         self.assertIn("exceeds ceiling 37.00 EUR", report)
         self.assertIn("Checkout/payment remain DISABLED", report)
 

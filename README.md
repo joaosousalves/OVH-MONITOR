@@ -1315,6 +1315,50 @@ disabled** (`OVH_AUTO_BUY_ENABLED=false`).
 No new API rights or systemd services are required. After updating, run
 `python3 ksle_monitor.py --list-prices` to inspect the revised estimates.
 
+## Phase R — owner-confirmed no-commitment price reference and drift detection
+
+The owner personally checked the KS-LE-6 **without a 12- or 24-month fixed
+commitment** prices on 20 November 2026. They confirmed 23% mainland Portugal
+VAT, a 26.99 EUR ex-VAT setup charge and the four monthly ex-VAT prices of
+26.99, 27.99, 28.99 and 29.99 EUR, respectively, in the established disk
+priority order. The reference assumes **one month paid upfront plus setup**,
+without additional charges. The owner-approved hard limits remain **37 EUR
+monthly** and **80 EUR initial**, both including VAT, per server.
+
+The new completely offline command prints these owner-confirmed reference
+values even when every datacenter is out of stock:
+
+```bash
+cd /opt/ovh-ksle-monitor
+python3 ksle_monitor.py --confirmed-terms
+```
+
+When stock returns, a manual `--commercial-audit` or the existing five-minute
+commercial watcher will additionally compare the temporary cart's VAT-inclusive
+initial total and *available, consistent* item-level RENEW data against the
+owner's reference for the **exact storage configuration**. If a price has
+increased, even while still below the absolute budget limit, the report shows
+`ABOVE_CONFIRMED_REFERENCE` and flags the variation for owner review. If the
+cart lacks usable VAT-inclusive renewal evidence, it says `MONTHLY=UNVERIFIED`.
+Lower prices may reflect a promotion, **not** approval of any fixed commitment.
+The comparison does not claim that item-level renewal prices are binding or
+that `P1M` proves the right to cancel at any time.
+
+Stock notifications and the commercial watcher keep their current timers and
+duplicate prevention; no new API access is needed. Most importantly, no
+checkout or payment route has been added, and the auto-buy switch remains
+disabled. A live eligible configuration is still necessary before the audit
+can retrieve an actual temporary cart quotation.
+
+Update and verify:
+
+```bash
+sudo git -C /opt/ovh-ksle-monitor pull --ff-only
+cd /opt/ovh-ksle-monitor
+python3 -m unittest discover -s tests -q
+python3 ksle_monitor.py --confirmed-terms
+```
+
 ## Troubleshooting
 
 | Symptom | Check |

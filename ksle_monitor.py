@@ -556,6 +556,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--list-ksle6-disks", action="store_true",
                        help="Read-only ordered KS-LE-6 128GB disk availability in Europe/Canada")
     group.add_argument("--list-prices", action="store_true", help="Show cached public monthly catalog estimates (no cart)")
+    group.add_argument("--confirmed-terms", action="store_true",
+                       help="Show owner-confirmed PT monthly/setup price references, completely offline")
     group.add_argument("--diagnose-prices", action="store_true", help="Inspect KS-LE-6 public catalog price structure without credentials")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
     group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
@@ -658,6 +660,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.diagnose_prices:
             from pricing import fetch_catalog, diagnostic_summary
             print(json.dumps(diagnostic_summary(fetch_catalog()), indent=2))
+            return 0
+        if args.confirmed_terms:
+            from confirmed_terms import list_confirmed_terms
+            print(list_confirmed_terms())
             return 0
         if args.list_prices:
             from pricing import annotate_pt_vat_estimate, cached_prices

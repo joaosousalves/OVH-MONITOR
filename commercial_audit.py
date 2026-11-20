@@ -16,6 +16,7 @@ from typing import Any, Callable, Sequence
 from account_reconciliation import AccountReconciliationError
 from auto_buy_guard import PurchaseEvidence, assess_auto_buy
 from commitment_guard import CommitmentSafetyError, inspect_commitment
+from confirmed_terms import compare_cart, for_storage
 from ksle_monitor import APITransientError, MonitorError, Stock, retrieve_stock
 from order_probe import OVHCartClient, OrderProbeError, test_order, verify_available_test_fqn
 from payment_evidence import (
@@ -215,6 +216,10 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         renewal.amount_eur is not None and gross_renewal is not None
         and gross_renewal >= renewal.amount_eur
     )
+    owner_reference = compare_cart(
+        for_storage(candidate.storage), initial_gross=initial.with_tax,
+        monthly_gross=gross_renewal if monthly_consistent else None,
+    )
     monthly_gate = (
         "ABOVE_LIMIT" if monthly_consistent and gross_renewal > policy.max_monthly_eur else
         "INDICATIVE_WITHIN_LIMIT_NOT_FINAL" if monthly_consistent else
@@ -252,7 +257,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         f"(cap {policy.max_total_eur:.2f} EUR, all cart charges included). "
         "Separate installation fee NOT itemized/verified. "
         + breakdown.summary() + monthly + renewal.summary() + " " + commitment
-        + results["contracts"] + " " + payment.summary() + " "
+        + owner_reference + results["contracts"] + " " + payment.summary() + " "
         + f"Remote service + open order count {remote.upper_bound}/"
         f"{policy.max_servers}. Checkout/payment remain DISABLED. "
         + evidence_matrix
