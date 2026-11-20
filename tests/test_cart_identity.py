@@ -144,6 +144,34 @@ class CartIdentityTests(unittest.TestCase):
         params["fqn"] = "27skle06-v1.ram-128g-ddr4-ecc-2400.softraid-2x1920nvme"
         self.assertEqual(identity.inspect_manual_cart_identity(**params).status, "CONFLICT")
 
+    def test_manual_ks_4_readback_allows_specific_model_only(self):
+        plan = "24sk40-v1"
+        ram = "ram-32g-ecc-2133"
+        storage = "softraid-2x450nvme"
+        addons = [f"{ram}-{plan}", f"{storage}-{plan}"]
+        opts = {
+            "plan_code": plan,
+            "fqn": f"{plan}.{ram}.{storage}",
+            "datacenter": "gra",
+            "base_item_id": 100,
+            "addons": addons,
+            "configurations": {"dedicated_datacenter": "gra", "region": "europe",
+                               "dedicated_os": "none_64.en"},
+            "cart_items": [
+                {"planCode": code, "itemId": 100 + idx, "duration": "P1M",
+                 "pricingMode": "default", "quantity": 1}
+                for idx, code in enumerate((plan, *addons))
+            ],
+            "cart_configurations": [
+                {"label": "dedicated_datacenter", "value": "gra"},
+                {"label": "region", "value": "europe"},
+                {"label": "dedicated_os", "value": "none_64.en"},
+            ],
+        }
+        self.assertEqual(identity.inspect_manual_cart_identity(**opts).status, "VERIFIED")
+        opts["cart_items"][0]["planCode"] = "27skle04-v1"
+        self.assertEqual(identity.inspect_manual_cart_identity(**opts).status, "CONFLICT")
+
 
 if __name__ == "__main__":
     unittest.main()

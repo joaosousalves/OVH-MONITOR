@@ -715,6 +715,56 @@ class OrderProbeTests(unittest.TestCase):
         catalog.assert_called_once()
         self.assertIn("PUBLIC PREFLIGHT OK", output.call_args.args[0])
 
+    def test_ks_4_exact_stock_catalog_match_and_monthly_test_cart(self):
+        plan = probe.TEST_PLANS["ks-4"]
+        memory = "ram-32g-ecc-2133"
+        storage = "softraid-2x450nvme"
+        fqn = f"{plan}.{memory}.{storage}"
+        catalog_plan = {
+            "planCode": plan,
+            "configurations": CATALOG["plans"][0]["configurations"],
+            "addonFamilies": [
+                {"name": "memory", "mandatory": True,
+                 "addons": [f"{memory}-{plan}"], "default": f"{memory}-{plan}"},
+                {"name": "storage", "mandatory": True,
+                 "addons": [f"{storage}-{plan}"], "default": f"{storage}-{plan}"},
+            ],
+        }
+        fake = FakeClient(offers=[{"planCode": plan, "prices": [
+            {"duration": "P12M", "pricingMode": "default"},
+            {"duration": "P1M", "pricingMode": "default"},
+        ]}])
+        with patch.dict(CATALOG, {"plans": CATALOG["plans"] + [catalog_plan]}):
+            with patch.object(probe, "verify_available_test_fqn") as preflight:
+                with patch("pricing.fetch_catalog", return_value=CATALOG):
+                    with patch("builtins.print") as output:
+                        self.assertEqual(probe.run_check_test_config("bhs", "ks-4", fqn), 0)
+                with patch.object(probe, "OVHCartClient", return_value=fake):
+                    with patch.dict(probe.os.environ, {"OVH_TOKEN": "offline-test"}):
+                        self.assertEqual(probe.run_test_order("bhs", "preferred", "ks-4", fqn), 0)
+        self.assertEqual(preflight.call_count, 2)
+        self.assertIn("PUBLIC PREFLIGHT OK", output.call_args.args[0])
+        post_eco = [body for method, path, body, _ in fake.calls
+                    if method == "POST" and path.endswith("/eco")]
+        self.assertEqual(len(post_eco), 1)
+        self.assertEqual(post_eco[0]["planCode"], plan)
+        self.assertEqual(post_eco[0]["duration"], "P1M")
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in fake.calls))
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_ks_4_no_exact_fqn_or_missing_catalog_addon_blocks_cart(self):
+        fake = FakeClient()
+        plan = probe.TEST_PLANS["ks-4"]
+        with self.assertRaisesRegex(probe.OrderProbeError, "exact --test-fqn"):
+            probe.test_order(fake, plan_code=plan, storage_option="default")
+        self.assertFalse(fake.calls)
+        fqn = plan + ".ram-32g-ecc-2133.softraid-2x450nvme"
+        with self.assertRaisesRegex(probe.OrderProbeError, "not in OVHcloud's PT catalog"):
+            probe.test_order(fake, plan_code=plan, target_fqn=fqn)
+        self.assertFalse(any(method == "POST" and path == "/order/cart"
+                             for method, path, _, _ in fake.calls))
+
     def test_ks_le_3_stock_catalog_memory_mismatch_fails_read_only(self):
         plan = probe.TEST_PLANS["ks-le-3"]
         fqn = f"{plan}.ram-64g-ddr4-ecc-2666.softraid-3x4000sa"

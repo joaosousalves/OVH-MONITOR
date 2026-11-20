@@ -279,6 +279,32 @@ addon plan code (which ends in `-27skle06-v1`).
 The test's last step is a **GET** request to `/order/cart/{cartId}/checkout`.
 No purchase endpoint is present anywhere in the test-order API client.
 
+### Try a regular KS-4 when KS-LE test models are sold out
+
+The regular **KS-4** is not the KS-LE-4. The EU/Canada Eco plan code used by
+the manual diagnostic is `24sk40-v1` (the Singapore/Australia or older codes
+are deliberately excluded). KS-4 is **test-only**: never eligible for
+KS-LE-6 monitoring, automatic commercial watches or purchasing.
+
+Start with one unauthenticated, **read-only** stock query:
+
+```bash
+cd /opt/ovh-ksle-monitor
+python3 ksle_monitor.py --list-test-stock --test-plan ks-4
+```
+
+If a KS-4 hardware configuration is available in BHS, FRA, GRA, LON, RBX,
+SBG or WAW, copy its complete FQN and datacenter from the output. Use those
+exact values with `--check-test-config --test-plan ks-4 --datacenter ...
+--test-fqn ...` to compare with the current PT catalog, without a cart or
+credentials. Only after `PUBLIC PREFLIGHT OK` may you run the optional
+`--audit-test-cart --test-plan ks-4` with the **same** full FQN/datacenter and
+the configured `/etc/ovh-ksle-order.env`. The live stock is rechecked before
+creating the one temporary cart; it is deleted afterward when possible.
+The audit never calls checkout submission or payment endpoints. A successful
+KS-4 cart is only a test of the API, **not** proof that a KS-LE-6 configuration
+can be purchased.
+
 ### Diagnose a KS-LE-2 configuration with exact RAM and disks (never purchase)
 
 When a KS-LE-2 (`27skle02-v1`) is in stock, the **manual** diagnostic can

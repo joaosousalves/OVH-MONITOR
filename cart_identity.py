@@ -85,7 +85,7 @@ def inspect_manual_cart_identity(*, plan_code: str, fqn: str, datacenter: str,
     inspect_cart_identity() with its exact 128-GB and disk allowlist.
     """
     if (not isinstance(plan_code, str)
-            or re.fullmatch(r"27skle0[1236]-v1", plan_code) is None
+            or re.fullmatch(r"(?:27skle0[1236]-v1|24sk40-v1)", plan_code) is None
             or not isinstance(fqn, str) or len(fqn) > 250
             or len(fqn.split(".")) != 3
             or fqn.split(".")[0] != plan_code

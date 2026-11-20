@@ -33,10 +33,14 @@ TEST_PLANS = {
     "ks-le-1": "27skle01-v1",
     "ks-le-2": "27skle02-v1",
     "ks-le-3": "27skle03-v1",
+    # Regular Kimsufi KS-4 (EU/CA); this is NOT KS-LE-4 or an order target.
+    "ks-4": "24sk40-v1",
 }
 # These alternate models are ONLY for manual, stock-gated diagnostics. They
 # must never enter the monitored/purchase product filter or quota.
-EXACT_FQN_TEST_PLANS = {TEST_PLANS["ks-le-2"], TEST_PLANS["ks-le-3"]}
+EXACT_FQN_TEST_PLANS = {
+    TEST_PLANS["ks-le-2"], TEST_PLANS["ks-le-3"], TEST_PLANS["ks-4"],
+}
 PREFERRED_STORAGE_OPTION = "hybridsoftraid-2x4000sa-2x500nvme-27skle06-v1"
 DATACENTERS = {"bhs", "fra", "gra", "lon", "rbx", "sbg", "waw"}
 LOGGER = logging.getLogger("ksle-order-probe")
@@ -555,7 +559,7 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
     if test_plan not in TEST_PLANS:
         LOGGER.error("Unsupported test product: %s", test_plan)
         return 1
-    # KS-LE-2/3 are diagnostics only. Never guess their default hardware
+    # Alternate models are diagnostics only. Never guess their default hardware
     # configuration or create a cart without a fresh, exact stock match.
     if TEST_PLANS[test_plan] in EXACT_FQN_TEST_PLANS and target_fqn is None:
         LOGGER.error("Alternate-model diagnostic requires --test-fqn from --list-test-stock; no cart created")
