@@ -417,7 +417,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                plan_code: str = PLAN_CODE, target_fqn: str | None = None,
                quote_validator: Any = None,
                renewal_observer: Any = None,
-               identity_observer: Any = None) -> str:
+               identity_observer: Any = None,
+               schema_observer: Any = None) -> str:
     """Build and quote a temporary cart; NEVER submit checkout or payment."""
     datacenter = datacenter.lower()
     if datacenter not in DATACENTERS:
@@ -463,6 +464,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
         item_id = order_item.get("itemId") if isinstance(order_item, dict) else None
         if not isinstance(item_id, int) or item_id <= 0:
             raise OrderProbeError("Adding server to cart returned no valid itemId")
+        if schema_observer is not None:
+            schema_observer("base_item", order_item)
         if "duration" in order_item and order_item["duration"] != "P1M":
             raise OrderProbeError("Cart item is not on an exact P1M term")
         try:
@@ -481,12 +484,16 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             })
             if item_responses is not None:
                 item_responses.append(addon_response)
+            if schema_observer is not None:
+                schema_observer("addon_item", addon_response)
         for label, value in configurations.items():
             client.request("POST", cart_path + f"/item/{item_id}/configuration", {
                 "label": label,
                 "value": value,
             })
         quote_data = client.request("GET", cart_path + "/checkout")
+        if schema_observer is not None:
+            schema_observer("checkout", quote_data)
         price = extract_quote(quote_data)
         try:
             inspect_commitment(quote_data)
@@ -503,6 +510,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             renewal_observer(tuple(item_responses))
         if identity_observer is not None:
             if target_fqn is None:
+                if schema_observer is not None:
+                    schema_observer("readback_not_requested", None)
                 identity_observer(identity_unavailable())
             else:
                 try:
@@ -510,22 +519,34 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                     # that results in UNVERIFIED, never a false pass.
                     items_path = cart_path + "/item"
                     cart_items = client.request("GET", items_path)
+                    if schema_observer is not None:
+                        schema_observer("items_get", cart_items)
                     cart_items = expand_cart_readback(
                         client, items_path, cart_items, "itemId",
                     )
+                    if schema_observer is not None:
+                        schema_observer("items_expanded", cart_items)
                     configs_path = cart_path + f"/item/{item_id}/configuration"
                     cart_configs = client.request(
                         "GET", configs_path,
                     )
+                    if schema_observer is not None:
+                        schema_observer("configurations_get", cart_configs)
                     cart_configs = expand_cart_readback(
                         client, configs_path, cart_configs, "configurationId",
                     )
+                    if schema_observer is not None:
+                        schema_observer("configurations_expanded", cart_configs)
                 except CartReadbackConflict:
+                    if schema_observer is not None:
+                        schema_observer("readback_conflict", None)
                     identity_observer(CartIdentityEvidence(
                         "CONFLICT", "cart GET identifier differed from requested identifier",
                     ))
                 except OrderProbeError:
                     LOGGER.warning("Optional cart identity GET unavailable (no purchase); evidence unverified")
+                    if schema_observer is not None:
+                        schema_observer("readback_unavailable", None)
                     identity_observer(identity_unavailable())
                 else:
                     identity_args = dict(
@@ -551,7 +572,9 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
 
 
 def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
-                   target_fqn: str | None = None, *, detailed: bool = False) -> int:
+                   target_fqn: str | None = None, *, detailed: bool = False,
+                   schema: bool = False) -> int:
+    detailed = detailed or schema
     token = os.getenv("OVH_TOKEN", "").strip()
     ak = os.getenv("OVH_APPLICATION_KEY", "").strip()
     secret = os.getenv("OVH_APPLICATION_SECRET", "").strip()
@@ -575,6 +598,8 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
             token, application_key=ak, application_secret=secret, consumer_key=ck
         )
         observed: dict[str, Any] = {}
+        from cart_schema_diagnostic import SchemaTrace
+        trace = SchemaTrace() if schema else None
 
         def observe_quote(quote: Any) -> None:
             observed["quote"] = quote
@@ -597,14 +622,24 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
                             quote_validator=observe_quote if detailed else None,
                             renewal_observer=observe_items if detailed else None,
                             identity_observer=(lambda item: observed.__setitem__("identity", item))
-                            if detailed else None)
-        print(result)
+                            if detailed else None,
+                            schema_observer=trace.capture if trace is not None else None)
+        if schema:
+            # The legacy test-order message contains OVH's untrusted,
+            # unparsed price display. A schema-only diagnostic must not echo
+            # it (or any item values) into an operator's shared logs.
+            print("MANUAL TEMPORARY CART CHECK COMPLETED (NO PURCHASE); "
+                  "raw item details and price display omitted.")
+        else:
+            print(result)
         if detailed:
             if "quote" not in observed or "items" not in observed:
                 raise OrderProbeError("Incomplete commercial evidence; no purchase")
             from manual_cart_audit import manual_cart_report
             print(manual_cart_report(observed["quote"], observed["items"],
                                      observed.get("identity")))
+            if trace is not None:
+                print(trace.report())
             identity = observed.get("identity")
             if isinstance(identity, CartIdentityEvidence) and identity.status == "CONFLICT":
                 LOGGER.error("Detailed cart audit found an identity mismatch; no purchase")

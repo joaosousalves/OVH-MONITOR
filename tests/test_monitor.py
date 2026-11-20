@@ -133,6 +133,18 @@ class MonitorTests(unittest.TestCase):
                                     "27skle02-v1.ram-32g-ddr3-ecc-1333.softraid-2x2000sa",
                                     detailed=True)
 
+    def test_manual_cart_schema_diagnostic_dispatch_is_opt_in(self):
+        with patch("order_probe.run_test_order", return_value=0) as run:
+            rc = monitor.main([
+                "--diagnose-cart-schema", "--test-plan", "ks-4",
+                "--datacenter", "bhs",
+                "--test-fqn", "24sk40-v1.ram-16g-ecc-2133.softraid-2x450nvme",
+            ])
+        self.assertEqual(rc, 0)
+        run.assert_called_once_with("bhs", "preferred", "ks-4",
+                                    "24sk40-v1.ram-16g-ecc-2133.softraid-2x450nvme",
+                                    schema=True)
+
     def test_ks_4_read_only_stock_lookup_is_separate_from_ks_le_6(self):
         plan = "24sk40-v1"
         fqn = plan + ".ram-32g-ecc-2133.softraid-2x450nvme"

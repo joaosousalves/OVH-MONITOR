@@ -189,6 +189,65 @@ class OrderProbeTests(unittest.TestCase):
         self.assertIn(("GET", "/order/cart/cart-123/item/12345/configuration", None, None), fake.calls)
         self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
 
+    def test_schema_observer_uses_existing_cart_calls_and_get_only_readback(self):
+        from cart_schema_diagnostic import SchemaTrace
+        fake = ReadbackClient(ids_only=True)
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        trace = SchemaTrace()
+        identity = []
+        probe.test_order(fake, target_fqn=fqn, identity_observer=identity.append,
+                         schema_observer=trace.capture)
+        self.assertTrue(identity[0].verified)
+        report = trace.report()
+        self.assertIn("base_item: ", report)
+        self.assertIn("addon_item: ", report)
+        self.assertIn("checkout: ", report)
+        self.assertIn("items_get: list(4); sampled=4 [number=4]", report)
+        self.assertIn("items_expanded: list(4); sampled=4 [object=4]", report)
+        self.assertIn("configurations_get: list(3)", report)
+        self.assertIn("configurations_expanded: list(3)", report)
+        self.assertNotIn("12345", report)
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and (path.endswith("/checkout") or "/pay" in path)
+                             for method, path, _, _ in fake.calls))
+
+    def test_schema_observer_get_denied_does_not_leak_exception(self):
+        from cart_schema_diagnostic import SchemaTrace
+        fake = ReadbackClient(fail_path="/order/cart/cart-123/item")
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        trace = SchemaTrace()
+        identity = []
+        probe.test_order(fake, target_fqn=fqn, identity_observer=identity.append,
+                         schema_observer=trace.capture)
+        self.assertEqual(identity[0].status, "UNVERIFIED")
+        self.assertIn("readback_unavailable", trace.report())
+        self.assertNotIn("cart-123", trace.report())
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_schema_cli_probe_report_requires_stock_and_cleanup(self):
+        fake = ReadbackClient()
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        with patch.object(probe, "verify_available_test_fqn") as stock:
+            with patch.object(probe, "OVHCartClient", return_value=fake):
+                with patch.dict(probe.os.environ, {"OVH_TOKEN": "offline-test"}):
+                    with patch("builtins.print") as output:
+                        rc = probe.run_test_order("bhs", "preferred", "ks-le-6", fqn,
+                                                  schema=True)
+        self.assertEqual(rc, 0)
+        stock.assert_called_once_with(probe.PLAN_CODE, fqn, "bhs")
+        report = output.call_args_list[-1].args[0]
+        self.assertIn("REDACTED MANUAL CART SCHEMA", report)
+        self.assertIn("prices=missing", report)
+        self.assertIn("configurations_expanded:", report)
+        self.assertNotIn("cart-123", report)
+        self.assertIn("raw item details and price display omitted", output.call_args_list[0].args[0])
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and (path.endswith("/checkout") or "/pay" in path)
+                             for method, path, _, _ in fake.calls))
+
     def test_optional_identity_get_denied_remains_unverified_and_cleans_cart(self):
         fake = ReadbackClient(fail_path="/order/cart/cart-123/item")
         fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."

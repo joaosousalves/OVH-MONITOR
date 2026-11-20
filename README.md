@@ -305,6 +305,50 @@ The audit never calls checkout submission or payment endpoints. A successful
 KS-4 cart is only a test of the API, **not** proof that a KS-LE-6 configuration
 can be purchased.
 
+#### Inspect missing RENEW fields and incomplete cart readback (manual only)
+
+If `--audit-test-cart` reports missing `RENEW` labels or `CART IDENTITY
+UNVERIFIED`, use `--diagnose-cart-schema` to print a **redacted shape-only**
+report for the same exact FQN. This mode reuses the regular temporary cart,
+checkout **GET quotation** and optional item/configuration **GET readbacks**;
+it does not call any new cart mutation endpoints. Its report shows only a
+fixed allowlist of field names, field types, counts and recognized categories
+(`RENEW`, `INSTALLATION`, `DURATION`, etc.). It never prints raw field values,
+extra response keys, identifiers, URLs, contractual text, personal details or
+credentials. It is not a way to establish missing renewal prices or proof of
+commitment-free terms.
+
+First check currently available stock; the previously observed BHS option
+may already have sold out:
+
+```bash
+cd /opt/ovh-ksle-monitor
+python3 ksle_monitor.py --list-test-stock --test-plan ks-4
+```
+
+If BHS with `16 GB / 2 × 450 GB NVMe` is **still** available, first run
+`--check-test-config` with the full FQN to confirm a catalog match, then:
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ks4-schema-diagnostic \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --diagnose-cart-schema --test-plan ks-4 --datacenter bhs \
+  --test-fqn '24sk40-v1.ram-16g-ecc-2133.softraid-2x450nvme'
+```
+
+If that exact stock is unavailable, copy a **currently available** full FQN
+and datacenter from `--list-test-stock`, and use the same pair for both the
+preflight and diagnostic. An unsuccessful stock check creates no cart.
+Temporary carts are deleted in a `finally` block where OVH permits deletion;
+if the API DELETE fails, check the temporary cart manually. Optional GET
+readback permissions may also fail; that produces a fixed
+`readback_unavailable` indicator without printing the API error. Even a
+completely populated shape report does **not** verify actual values, VAT,
+renewal commitment or eligibility for purchase. The main KS-LE-6 monitor,
+quotas and financial limits remain unchanged. Checkout/payment are disabled.
+
 ### Diagnose a KS-LE-2 configuration with exact RAM and disks (never purchase)
 
 When a KS-LE-2 (`27skle02-v1`) is in stock, the **manual** diagnostic can
