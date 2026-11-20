@@ -8,6 +8,7 @@ cannot yet be linked reliably, so the combined quota remains inconclusive.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 import logging
 import re
 from typing import Any
@@ -39,6 +40,7 @@ class PendingOrderInventory:
     inspected_orders: int
     open_orders: int
     pending_servers: int
+    expired_unpaid_orders: int = 0
 
     @property
     def overlap_unverified(self) -> bool:
@@ -57,6 +59,7 @@ class PendingOrderInventory:
             f"PENDING ORDERS READ-ONLY: {self.services.matching_services} "
             f"KS-LE-6 service(s), {self.pending_servers} open KS-LE-6 order item(s); "
             f"{self.inspected_orders} order(s) checked, {self.open_orders} open; "
+            f"{self.expired_unpaid_orders} expired unpaid order(s) excluded; "
             f"cap {self.services.max_servers}. "
         )
         if self.overlap_unverified:
@@ -99,6 +102,33 @@ def _order_status(raw: Any) -> str:
         return status
     # Includes 'unknown', and any provider state introduced in the future.
     raise PendingOrdersError("Unrecognized purchase order status")
+
+
+def _unpaid_order_expired(raw: Any, order_id: int, today_utc: date) -> bool:
+    """Exclude a notPaid order only when its expiry predates the UTC day.
+
+    OVH documents unpaid purchase orders as no longer purchasable after their
+    expiration date. Unknown timestamps must fail closed, not imply expiry.
+    """
+    if not isinstance(raw, dict):
+        raise PendingOrdersError("Missing unpaid order metadata")
+    returned_id = raw.get("orderId")
+    if returned_id is not None and returned_id != order_id:
+        raise PendingOrdersError("Mismatched unpaid order identifier")
+    expiration = raw.get("expirationDate")
+    if not isinstance(expiration, str) or not expiration.strip():
+        raise PendingOrdersError("Missing unpaid order expiration date")
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiration):
+            expiration_day = date.fromisoformat(expiration)
+        else:
+            stamp = datetime.fromisoformat(expiration.replace("Z", "+00:00"))
+            if stamp.tzinfo is None or stamp.utcoffset() is None:
+                raise ValueError("Unspecified expiration timezone")
+            expiration_day = stamp.astimezone(timezone.utc).date()
+    except ValueError as exc:
+        raise PendingOrdersError("Invalid or timezone-ambiguous unpaid order expiration date") from exc
+    return expiration_day < today_utc
 
 
 def _order_detail_ids(raw: Any) -> list[int]:
@@ -191,16 +221,26 @@ def _get(client: OVHCartClient, path: str, label: str) -> Any:
 
 
 def reconcile_pending_orders(client: OVHCartClient, max_servers: int = 2,
-                             *, service_check=reconcile_account) -> PendingOrderInventory:
+                             *, service_check=reconcile_account,
+                             as_of_utc_date: date | None = None) -> PendingOrderInventory:
     """Exhaustive bounded GET scan; no POST, temporary carts, email or writes."""
+    if as_of_utc_date is not None and type(as_of_utc_date) is not date:
+        raise PendingOrdersError("Invalid inventory reference date")
+    today_utc = as_of_utc_date or datetime.now(timezone.utc).date()
     service_inventory = service_check(client, max_servers)
     ids = validate_order_ids(_get(client, "/me/order", "account order list"))
     pending = 0
     open_orders = 0
+    expired_unpaid_orders = 0
     for order_id in ids:
         status = _order_status(_get(client, f"/me/order/{order_id}/status", "order status"))
         if status in TERMINAL_STATUSES:
             continue
+        if status == "notPaid":
+            metadata = _get(client, f"/me/order/{order_id}", "unpaid order expiration")
+            if _unpaid_order_expired(metadata, order_id, today_utc):
+                expired_unpaid_orders += 1
+                continue
         open_orders += 1
         detail_ids = _order_detail_ids(_get(client, f"/me/order/{order_id}/details", "order details"))
         rows: list[tuple[Any, Any]] = []
@@ -215,7 +255,9 @@ def reconcile_pending_orders(client: OVHCartClient, max_servers: int = 2,
             extension = _get(client, base + "/extension", "order plan extension")
             rows.append((detail, extension))
         pending += count_order_items(rows)
-    return PendingOrderInventory(service_inventory, len(ids), open_orders, pending)
+    return PendingOrderInventory(
+        service_inventory, len(ids), open_orders, pending, expired_unpaid_orders,
+    )
 
 
 def run_pending_order_reconciliation() -> int:

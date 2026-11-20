@@ -806,6 +806,7 @@ GET /service
 GET /service/*
 GET /dedicated/server/*/specifications/hardware
 GET /me/order
+GET /me/order/*
 GET /me/order/*/status
 GET /me/order/*/details
 GET /me/order/*/details/*
@@ -817,13 +818,25 @@ which must match `27skle06-v1` or `27skle06`. Distinct ordered items are
 grouped by their cart item identifier or OVH billing-domain parent, so
 multiple invoice lines for a single server are not automatically counted as
 different servers. Two separate KS-LE-6 orders or a quantity of two use
-both quota slots. `notPaid`, `checking`, `delivering`, `documentsRequested`
-and `cancelling` remain open until their status is resolved. `unknown`,
-unrecognized statuses, missing product codes/details, ambiguous duplicates,
-API failures or oversized order lists **fail closed**, never returning a
-false zero. Account identifiers and purchase descriptions are omitted from
-CLI output and error messages. Order scans are bounded to 250 orders with
-100 details each, and may encounter OVHcloud rate limits.
+both quota slots. `checking`, `delivering`, `documentsRequested` and
+`cancelling` remain open until their status is resolved. For `notPaid` orders,
+the scanner also fetches `GET /me/order/{id}` and reads `expirationDate`:
+only those whose expiry date is **strictly earlier than the current UTC day**
+are excluded as expired unpaid purchase orders. OVHcloud documents unpaid
+purchase orders as no longer purchasable after their expiration date. An order
+expiring **today** remains open. A verified expiry is reported separately;
+this does **not** change any real OVHcloud order or cancel it remotely.
+
+Missing/malformed expiry dates, timestamps without a timezone, order-ID
+mismatches, `unknown` or unrecognized statuses, missing product codes/details
+for still-open orders, ambiguous duplicates, API failures or oversized order
+lists **fail closed**, never returning a false zero. Account identifiers and
+purchase descriptions are omitted from CLI output and error messages. Order
+scans are bounded to 250 orders with 100 details each, and may encounter
+OVHcloud rate limits. The additional order-metadata GET route is already
+supported by the client; ensure the API key grants `GET /me/order/*`.
+
+Reference: [OVHcloud — Managing orders](https://docs.ovhcloud.com/en/guides/account-and-service-management/managing-billing-payments-and-services/ovh-orders).
 
 Orders marked `delivered` are excluded from **open-order counts**, because
 their provisioned servers should be represented in the service inventory.

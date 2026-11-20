@@ -1,6 +1,7 @@
 """Pending order inventory is strictly read-only and uses offline API fakes."""
 from __future__ import annotations
 
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 import sys
@@ -46,11 +47,13 @@ class FakeOrders:
         return reply
 
 
-def one_order(*, status="checking", code="27skle06-v1", order_id=101):
+def one_order(*, status="checking", code="27skle06-v1", order_id=101,
+              expiration="2099-12-31"):
     base = f"/me/order/{order_id}"
     main, extension = detail(code)
     return {
         "/me/order": [order_id],
+        base: {"orderId": order_id, "expirationDate": expiration},
         base + "/status": status,
         base + "/details": [5],
         base + "/details/5": main,
@@ -88,6 +91,83 @@ class PendingOrderTests(unittest.TestCase):
                 self.assertFalse(result.overlap_unverified)
                 self.assertEqual(result.upper_bound, 1)
                 self.assertTrue(all(method == "GET" for method, _ in fake.calls))
+
+    def test_expired_not_paid_skips_unreadable_details_and_is_not_open(self):
+        responses = one_order(status="notPaid", expiration="2020-01-01", code=None)
+        for suffix in ("/details", "/details/5", "/details/5/extension"):
+            del responses["/me/order/101" + suffix]
+        fake = FakeOrders(responses)
+        result = reconcile_pending_orders(
+            fake, service_check=account, as_of_utc_date=date(2026, 11, 20),
+        )
+        self.assertEqual((result.open_orders, result.pending_servers,
+                          result.expired_unpaid_orders), (0, 0, 1))
+        self.assertIn("1 expired unpaid order(s) excluded", result.summary())
+        self.assertEqual(fake.calls, [
+            ("GET", "/me/order"),
+            ("GET", "/me/order/101/status"),
+            ("GET", "/me/order/101"),
+        ])
+
+    def test_unpaid_expiring_today_or_later_is_still_open(self):
+        for expiration in ("2026-11-20", "2026-11-21"):
+            with self.subTest(expiration=expiration):
+                fake = FakeOrders(one_order(status="notPaid", expiration=expiration))
+                result = reconcile_pending_orders(
+                    fake, service_check=account, as_of_utc_date=date(2026, 11, 20),
+                )
+                self.assertEqual(result.pending_servers, 1)
+                self.assertEqual(result.expired_unpaid_orders, 0)
+                self.assertIn(("GET", "/me/order/101/details"), fake.calls)
+
+    def test_timezone_aware_expiration_uses_utc_calendar_day(self):
+        for expiration, expected_expired in (
+            ("2026-11-19T23:00:00Z", True),
+            ("2026-11-20T01:00:00+02:00", True),
+            ("2026-11-19T23:00:00-02:00", False),
+        ):
+            with self.subTest(expiration=expiration):
+                fake = FakeOrders(one_order(status="notPaid", expiration=expiration))
+                result = reconcile_pending_orders(
+                    fake, service_check=account, as_of_utc_date=date(2026, 11, 20),
+                )
+                self.assertEqual(result.expired_unpaid_orders, int(expected_expired))
+                self.assertEqual(result.pending_servers, int(not expected_expired))
+
+    def test_unknown_unpaid_expiration_fails_closed_before_details(self):
+        for expiration in (None, "", "not-a-date", "2026-02-30",
+                           "2026-11-19T14:30:00", 12345):
+            with self.subTest(expiration=expiration):
+                fake = FakeOrders(one_order(status="notPaid", expiration=expiration))
+                with self.assertRaisesRegex(PendingOrdersError, "expiration date"):
+                    reconcile_pending_orders(
+                        fake, service_check=account, as_of_utc_date=date(2026, 11, 20),
+                    )
+                self.assertEqual(len(fake.calls), 3)
+
+    def test_unpaid_order_metadata_id_mismatch_fails_closed(self):
+        responses = one_order(status="notPaid")
+        responses["/me/order/101"]["orderId"] = 102
+        with self.assertRaisesRegex(PendingOrdersError, "Mismatched unpaid order"):
+            reconcile_pending_orders(FakeOrders(responses), service_check=account)
+
+    def test_non_unpaid_status_does_not_need_order_expiration_metadata(self):
+        responses = one_order(status="checking")
+        del responses["/me/order/101"]
+        fake = FakeOrders(responses)
+        result = reconcile_pending_orders(fake, service_check=account)
+        self.assertEqual(result.pending_servers, 1)
+        self.assertNotIn(("GET", "/me/order/101"), fake.calls)
+
+    def test_expiration_lookup_403_fails_closed_without_leaking_order_id(self):
+        responses = one_order(status="notPaid")
+        responses["/me/order/101"] = order_probe.OrderProbeError(
+            "OVHcloud API 403 /me/order/101"
+        )
+        with self.assertRaises(PendingOrdersError) as context:
+            reconcile_pending_orders(FakeOrders(responses), service_check=account)
+        self.assertNotIn("101", str(context.exception))
+        self.assertIn("GET API rights", str(context.exception))
 
     def test_two_different_pending_ksle6_orders_reach_cap(self):
         responses = one_order(order_id=101)
