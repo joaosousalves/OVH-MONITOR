@@ -15,6 +15,7 @@ from typing import Any, Callable, Sequence
 
 from account_reconciliation import AccountReconciliationError
 from auto_buy_guard import PurchaseEvidence, assess_auto_buy
+from cart_identity import CartIdentityEvidence, unavailable as identity_unavailable
 from commitment_guard import CommitmentSafetyError, inspect_commitment
 from confirmed_terms import compare_cart, for_storage
 from ksle_monitor import APITransientError, MonitorError, Stock, retrieve_stock
@@ -166,10 +167,15 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         results["renewal"] = inspect_cart_renewals(items)
         results["gross_renewal"] = _renewal_vat_gross(items)
 
+    def check_identity(identity: CartIdentityEvidence) -> None:
+        if not isinstance(identity, CartIdentityEvidence):
+            raise PurchaseSafetyError("Unrecognized cart identity readback")
+        results["identity"] = identity
+
     test_order(
         client, datacenter=candidate.datacenter, plan_code="27skle06-v1",
         target_fqn=candidate.fqn, quote_validator=check_quote,
-        renewal_observer=check_renewals,
+        renewal_observer=check_renewals, identity_observer=check_identity,
     )
     if "initial" not in results or "renewal" not in results or "gross_renewal" not in results:
         raise PurchaseSafetyError("Incomplete temporary cart commercial evidence")
@@ -180,6 +186,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
 
     initial: InitialPrice = results["initial"]
     renewal = results["renewal"]
+    identity = results.get("identity", identity_unavailable())
     gross_renewal, reason = results["gross_renewal"]
     if renewal.amount_eur is None:
         monthly = (
@@ -232,6 +239,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         f"SETUP_DETAILS={'PRESENT_TAX_UNVERIFIED' if breakdown.status == 'LINES_PRESENT' else 'UNVERIFIED'}; "
         f"MONTHLY_VAT={monthly_gate}; "
         f"ZERO_COMMITMENT={'INDICATIVE_ONLY' if results.get('zero_commitment') else 'UNVERIFIED'}; "
+        f"CART_IDENTITY={identity.status}; "
         f"CONTRACT_TERMS=UNVERIFIED; PAYMENT_FOR_THIS_ORDER=UNVERIFIED; "
         f"ACCOUNT_COUNT=READ_ONLY_SNAPSHOT({remote.upper_bound}/{policy.max_servers}); "
         "FINAL_DECISION=BLOCKED. "
@@ -250,9 +258,9 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         local_purchase_history_clear=True,
         quote_fqn=candidate.fqn,
         quote_datacenter=candidate.datacenter,
-        # These labels come from the requested selection, not independently
-        # verified returned item identity. Never promote them to proof.
-        quote_identity_verified=False,
+        # Only a complete optional GET readback may establish cart identity;
+        # initial VAT alone never proves a specific hardware combination.
+        quote_identity_verified=identity.verified,
     )).summary()
     return (
         "COMMERCIAL AUDIT PARTIAL (NO PURCHASE): "
@@ -262,7 +270,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         f"(cap {policy.max_total_eur:.2f} EUR, all cart charges included). "
         "Separate installation fee NOT itemized/verified. "
         + breakdown.summary() + monthly + renewal.summary() + " " + commitment
-        + owner_reference + results["contracts"] + " " + payment.summary() + " "
+        + owner_reference + identity.summary() + results["contracts"] + " " + payment.summary() + " "
         + f"Remote service + open order count {remote.upper_bound}/"
         f"{policy.max_servers}. Checkout/payment remain DISABLED. "
         + evidence_matrix

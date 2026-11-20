@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import commercial_audit as audit
+from cart_identity import CartIdentityEvidence
 import ksle_monitor as monitor
 from payment_evidence import PaymentEvidence
 from account_reconciliation import AccountInventory
@@ -117,6 +118,8 @@ class CommercialAuditTests(unittest.TestCase):
         self.assertIn("Separate installation fee NOT itemized/verified", report)
         self.assertIn("Zero-commitment indicator observed, but legal terms NOT VERIFIED", report)
         self.assertIn("OWNER-CONFIRMED PRICE COMPARISON", report)
+        self.assertIn("CART IDENTITY UNVERIFIED", report)
+        self.assertIn("CART_IDENTITY=UNVERIFIED", report)
         self.assertIn("MONTHLY=UNVERIFIED", report)
         self.assertIn("AUTO-BUY BLOCKED (NO PURCHASE)", report)
         self.assertIn("final monthly renewal including VAT not verified", report)
@@ -129,6 +132,23 @@ class CommercialAuditTests(unittest.TestCase):
         self.assertEqual(self.quota.read(), [])
         self.assertFalse(self.journal.path.exists())
         self.assertEqual(cart.call_count, 1)
+
+    def test_verified_cart_readback_alone_never_authorizes_checkout(self):
+        def fake_with_readback(_client, *, quote_validator, renewal_observer,
+                               identity_observer, **_kwargs):
+            quote_validator(quote(commitment="P0M"))
+            renewal_observer((item(renew="25.00", gross="30.75"),))
+            identity_observer(CartIdentityEvidence(
+                "VERIFIED", "exact cart item and configuration readback matches selection",
+            ))
+        with patch.object(audit, "verify_available_test_fqn"):
+            with patch.object(audit, "test_order", side_effect=fake_with_readback):
+                report = self.run_audit()
+        self.assertIn("CART_IDENTITY=VERIFIED", report)
+        self.assertIn("CART IDENTITY VERIFIED", report)
+        self.assertIn("AUTO-BUY BLOCKED", report)
+        self.assertIn("final monthly renewal including VAT not verified", report)
+        self.assertIn("Checkout/payment remain DISABLED", report)
 
     def test_no_default_method_is_reported_but_not_concealed(self):
         with patch.object(audit, "verify_available_test_fqn"):

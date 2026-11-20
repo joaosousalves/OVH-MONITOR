@@ -19,6 +19,10 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from commitment_guard import CommitmentSafetyError, inspect_commitment
+from cart_identity import (
+    CartIdentityEvidence, MAX_ROWS, inspect_cart_identity,
+    unavailable as identity_unavailable,
+)
 
 
 BASE_URL = "https://api.eu.ovhcloud.com/v1"
@@ -35,6 +39,11 @@ SAFE_ROUTES = {
         re.compile(r"^/order/catalog/public/eco$"),
         re.compile(r"^/order/cart/[A-Za-z0-9-]+/eco$"),
         re.compile(r"^/order/cart/[A-Za-z0-9-]+/checkout$"),
+        # Additional observational cart readback: these never submit or pay.
+        re.compile(r"^/order/cart/[A-Za-z0-9-]+/item$"),
+        re.compile(r"^/order/cart/[A-Za-z0-9-]+/item/[0-9]+$"),
+        re.compile(r"^/order/cart/[A-Za-z0-9-]+/item/[0-9]+/configuration$"),
+        re.compile(r"^/order/cart/[A-Za-z0-9-]+/item/[0-9]+/configuration/[0-9]+$"),
         # Read-only billing inventory. Exact service plan code, not server
         # name or commercial range, is used for the two-KS-LE-6 cap.
         re.compile(r"^/service$"),
@@ -70,6 +79,10 @@ SAFE_ROUTES = {
 
 class OrderProbeError(Exception):
     """An unsafe operation, unexpected response or OVHcloud API failure."""
+
+
+class CartReadbackConflict(OrderProbeError):
+    """An optional GET returned a different item/configuration identifier."""
 
 
 class OVHCartClient:
@@ -362,11 +375,37 @@ def extract_quote(quote_data: Any) -> str:
     return display
 
 
+def expand_cart_readback(client: OVHCartClient, path: str, data: Any,
+                         identifier: str) -> Any:
+    """Follow bounded GET-only item/configuration IDs when OVH lists IDs.
+
+    Other shapes are passed to the conservative inspector as unverified.
+    Every fetched ID is checked against any echoed identifier. No mutations.
+    """
+    if (not isinstance(data, list) or not 0 < len(data) <= MAX_ROWS):
+        return data
+    if all(isinstance(row, dict) for row in data):
+        return data
+    if (not all(type(row) is int and 0 < row < 10**15 for row in data)
+            or len(set(data)) != len(data)):
+        return data
+    objects = []
+    for row_id in data:
+        response = client.request("GET", f"{path}/{row_id}")
+        if not isinstance(response, dict):
+            return None
+        if identifier in response and response[identifier] != row_id:
+            raise CartReadbackConflict("Read-only cart identifier mismatch")
+        objects.append(response)
+    return objects
+
+
 def test_order(client: OVHCartClient, datacenter: str = "bhs",
                storage_option: str = PREFERRED_STORAGE_OPTION, subsidiary: str = "PT",
                plan_code: str = PLAN_CODE, target_fqn: str | None = None,
                quote_validator: Any = None,
-               renewal_observer: Any = None) -> str:
+               renewal_observer: Any = None,
+               identity_observer: Any = None) -> str:
     """Build and quote a temporary cart; NEVER submit checkout or payment."""
     datacenter = datacenter.lower()
     if datacenter not in DATACENTERS:
@@ -448,6 +487,39 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             # temporary cart operations. No extra API permissions or calls.
             # RENEW labels do not prove VAT-inclusive recurring charges.
             renewal_observer(tuple(item_responses))
+        if identity_observer is not None:
+            if target_fqn is None or plan_code != PLAN_CODE:
+                identity_observer(identity_unavailable())
+            else:
+                try:
+                    # Both are GET-only. Old API keys may lack these rights;
+                    # that results in UNVERIFIED, never a false pass.
+                    items_path = cart_path + "/item"
+                    cart_items = client.request("GET", items_path)
+                    cart_items = expand_cart_readback(
+                        client, items_path, cart_items, "itemId",
+                    )
+                    configs_path = cart_path + f"/item/{item_id}/configuration"
+                    cart_configs = client.request(
+                        "GET", configs_path,
+                    )
+                    cart_configs = expand_cart_readback(
+                        client, configs_path, cart_configs, "configurationId",
+                    )
+                except CartReadbackConflict:
+                    identity_observer(CartIdentityEvidence(
+                        "CONFLICT", "cart GET identifier differed from requested identifier",
+                    ))
+                except OrderProbeError:
+                    LOGGER.warning("Optional cart identity GET unavailable (no purchase); evidence unverified")
+                    identity_observer(identity_unavailable())
+                else:
+                    identity_observer(inspect_cart_identity(
+                        fqn=target_fqn, datacenter=datacenter,
+                        base_item_id=item_id, addons=addons,
+                        configurations=configurations,
+                        cart_items=cart_items, cart_configurations=cart_configs,
+                    ))
         return f"Carrinho de teste validado: {plan_code}, {datacenter.upper()}, addons={addons}; total com IVA: {price}. Nenhuma encomenda criada."
     finally:
         if cart_id is not None:

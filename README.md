@@ -1407,6 +1407,62 @@ No new API keys, API permissions, timers or settings are needed. Keep
 an exact eligible cart/renewal/contract/payment proof path is developed,
 reviewed and explicitly authorized by the account owner.
 
+## Phase T — optional GET-only cart identity verification
+
+When eligible stock exists, the manual `--commercial-audit` or existing
+five-minute commercial watcher now tries to **read back the temporary cart**
+before reporting it. These operations are documented in the
+[OVHcloud Orders API](https://developers.eu.ovhcloud.com/reference/offers-services/orders/):
+
+```text
+GET /order/cart/{cartId}/item
+GET /order/cart/{cartId}/item/{itemId}
+GET /order/cart/{cartId}/item/{itemId}/configuration
+GET /order/cart/{cartId}/item/{itemId}/configuration/{configurationId}
+```
+
+Only the GET methods above were added to the client's allowlist. If the
+collection returns numeric identifiers instead of complete objects, the
+monitor may use the corresponding individual GETs (maximum 24 rows). The
+readback must explicitly match **every mandatory addon and selected
+configuration**, the requested KS-LE-6 plan/128 GB RAM/disks/datacenter,
+`P1M`, default pricing and quantity 1. Results are restricted to:
+
+- `CART_IDENTITY=VERIFIED`: every relevant cart item/configuration field
+  was observed and matches this specific temporary cart;
+- `CART_IDENTITY=UNVERIFIED`: API access denied, incomplete records, or
+  unrecognized response shape; the program **never guesses**;
+- `CART_IDENTITY=CONFLICT`: explicit contradictory product, disk, region,
+  selected configuration, term or identifier; no purchase allowed.
+
+This structural evidence is distinct from final VAT-inclusive renewal,
+contractual freedom from 12/24 months and payment authorization; these
+remain separate mandatory checks. **Even a VERIFIED cart identity does not
+permit a live order**, and checkout/payment POSTs are still blocked.
+
+Old API keys without these optional GET permissions continue to work for
+stock alerts and temporary-cart commercial reports, but show
+`CART_IDENTITY=UNVERIFIED`. To obtain stronger readback **later**, create a
+new restricted API key with the exact additional GET rights above. Do **not**
+grant POST `/order/cart/*/checkout` or payment rights during this phase.
+The diagnostic output omits raw account IDs, cart IDs, product descriptions,
+contract links and credentials. The temporary cart is deleted as before.
+
+Update and run the offline tests:
+
+```bash
+sudo git -C /opt/ovh-ksle-monitor pull --ff-only
+cd /opt/ovh-ksle-monitor
+python3 -m unittest discover -s tests -q
+python3 ksle_monitor.py --simulate-safe-purchase
+```
+
+No change to timers, SMTP or purchase configuration is needed. Actual
+readback is possible only while a suitable configuration is available and
+a temporary cart can be constructed. The regular `--commercial-audit`
+otherwise returns `WAITING` without creating a cart, checking payment or
+attempting an order.
+
 ## Troubleshooting
 
 | Symptom | Check |

@@ -37,6 +37,14 @@ OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 # GET /me/order/*/details
 # GET /me/order/*/details/*
 # GET /me/order/*/details/*/extension
+# Optional Phase T cart identity readback (GET only; account API key may need
+# these additional permissions for CART_IDENTITY=VERIFIED):
+# GET /order/cart/*/item
+# GET /order/cart/*/item/*
+# GET /order/cart/*/item/*/configuration
+# GET /order/cart/*/item/*/configuration/*
+# The account does NOT need these for ordinary stock alerts. If denied,
+# the commercial audit reports identity UNVERIFIED; it cannot authorize buy.
 # Do NOT grant POST /order/cart/*/checkout or POST /me/order/*/pay yet.
 # The --simulate-checkout command is fully offline and does not need a key.
 # The --simulate-safe-purchase command rehearses two orders with fake proof,

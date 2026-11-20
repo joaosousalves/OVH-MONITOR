@@ -57,6 +57,56 @@ class FakeClient:
         return {}
 
 
+class ReadbackClient(FakeClient):
+    """Fake structured GET responses; never an actual cart or network."""
+
+    def __init__(self, *, mismatched_dc=False, fail_path=None,
+                 ids_only=False, wrong_echo_id=False):
+        super().__init__(fail_path=fail_path)
+        self.mismatched_dc = mismatched_dc
+        self.ids_only = ids_only
+        self.wrong_echo_id = wrong_echo_id
+
+    def request(self, method, path, payload=None, query=None):
+        result = super().request(method, path, payload, query)
+        if method == "GET" and path == "/order/cart/cart-123/item":
+            if self.ids_only:
+                return list(range(12345, 12349))
+            codes = [probe.PLAN_CODE, "bandwidth-500-ks-gen0",
+                     "ram-128g-ddr4-ecc-2400-27skle06-v1",
+                     probe.PREFERRED_STORAGE_OPTION]
+            return [{"itemId": idx, "planCode": code,
+                     "duration": "P1M", "pricingMode": "default", "quantity": 1}
+                    for idx, code in enumerate(codes, start=12345)]
+        if method == "GET" and path.startswith("/order/cart/cart-123/item/") and path.count("/") == 5:
+            item_id = int(path.rsplit("/", 1)[1])
+            codes = [probe.PLAN_CODE, "bandwidth-500-ks-gen0",
+                     "ram-128g-ddr4-ecc-2400-27skle06-v1",
+                     probe.PREFERRED_STORAGE_OPTION]
+            if 12345 <= item_id <= 12348:
+                return {"itemId": item_id + (1 if self.wrong_echo_id else 0),
+                        "planCode": codes[item_id - 12345],
+                        "duration": "P1M", "pricingMode": "default", "quantity": 1}
+        if method == "GET" and path == "/order/cart/cart-123/item/12345/configuration":
+            if self.ids_only:
+                return [201, 202, 203]
+            return [{"label": "dedicated_datacenter",
+                     "value": "gra" if self.mismatched_dc else "bhs"},
+                    {"label": "region", "value": "canada"},
+                    {"label": "dedicated_os", "value": "none_64.en"}]
+        if method == "GET" and path.startswith("/order/cart/cart-123/item/12345/configuration/"):
+            config_id = int(path.rsplit("/", 1)[1])
+            values = {
+                201: ("dedicated_datacenter", "bhs"),
+                202: ("region", "canada"),
+                203: ("dedicated_os", "none_64.en"),
+            }
+            if config_id in values:
+                label, value = values[config_id]
+                return {"configurationId": config_id, "label": label, "value": value}
+        return result
+
+
 class OrderProbeTests(unittest.TestCase):
     def test_catalog_preferred_disk_and_bhs(self):
         configs, addons = probe.catalog_selection(CATALOG, probe.PREFERRED_STORAGE_OPTION, "bhs")
@@ -125,6 +175,58 @@ class OrderProbeTests(unittest.TestCase):
             raise ValueError("simulated evidence failure")
         with self.assertRaisesRegex(ValueError, "evidence failure"):
             probe.test_order(fake, renewal_observer=fail)
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_optional_get_cart_identity_reads_exact_structured_selection(self):
+        fake = ReadbackClient()
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        observed = []
+        probe.test_order(fake, target_fqn=fqn, identity_observer=observed.append)
+        self.assertEqual(len(observed), 1)
+        self.assertTrue(observed[0].verified)
+        self.assertIn(("GET", "/order/cart/cart-123/item", None, None), fake.calls)
+        self.assertIn(("GET", "/order/cart/cart-123/item/12345/configuration", None, None), fake.calls)
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_optional_identity_get_denied_remains_unverified_and_cleans_cart(self):
+        fake = ReadbackClient(fail_path="/order/cart/cart-123/item")
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        observed = []
+        probe.test_order(fake, target_fqn=fqn, identity_observer=observed.append)
+        self.assertEqual(observed[0].status, "UNVERIFIED")
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_optional_cart_identity_conflict_does_not_approve_selected_dc(self):
+        fake = ReadbackClient(mismatched_dc=True)
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        observed = []
+        probe.test_order(fake, target_fqn=fqn, identity_observer=observed.append)
+        self.assertEqual(observed[0].status, "CONFLICT")
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_cart_readback_can_follow_listed_ids_with_get_only(self):
+        fake = ReadbackClient(ids_only=True)
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        observed = []
+        probe.test_order(fake, target_fqn=fqn, identity_observer=observed.append)
+        self.assertTrue(observed[0].verified)
+        self.assertIn(("GET", "/order/cart/cart-123/item/12346", None, None), fake.calls)
+        self.assertIn(("GET", "/order/cart/cart-123/item/12345/configuration/201", None, None), fake.calls)
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in fake.calls))
+
+    def test_inconsistent_get_item_identifier_is_conflict_and_cart_deleted(self):
+        fake = ReadbackClient(ids_only=True, wrong_echo_id=True)
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        observed = []
+        probe.test_order(fake, target_fqn=fqn, identity_observer=observed.append)
+        self.assertEqual(observed[0].status, "CONFLICT")
         self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
 
     def test_cart_checkout_contract_with_twelve_month_term_fails_closed(self):
