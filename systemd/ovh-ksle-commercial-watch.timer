@@ -1,0 +1,12 @@
+[Unit]
+Description=Check KS-LE-6 stock for new commercial audit every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=30s
+AccuracySec=15s
+Unit=ovh-ksle-commercial-watch.service
+
+[Install]
+WantedBy=timers.target

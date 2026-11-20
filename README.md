@@ -917,6 +917,83 @@ grant `POST /order/cart/*/checkout`, `POST /me/order/*/pay`, or
 may become unavailable before a human can act. If the cart's DELETE cleanup
 fails, inspect the warning and remove it manually if necessary.
 
+## Phase J — automatic commercial audit on new stock (opt-in; NO purchase)
+
+The existing **30-second stock/email timer is unchanged**. A second, separate
+**5-minute** systemd timer can now invoke `--commercial-watch` after initial
+setup. It has its own root-only state and API backoff, and loads both the
+monitor's SMTP configuration and the ordering API credentials. The watcher
+does **not** create an order, activate checkout, or pay anything.
+
+- When no approved stock exists, the watcher reports `WAITING` and creates
+  **no cart**. When a suitable configuration first appears (or reappears after
+  an observed unavailable state), it runs Phase I once for the highest-ranked
+  eligible disk/datacenter selection.
+- A successfully completed **partial commercial audit** generates **one
+  additional plain-text email** showing the real initial quotation and which
+  recurring-price/contract proofs are missing. The original availability
+  alert continues to be sent separately by the 30-second timer.
+- A persisted private JSON journal prevents normal duplicate commercial
+  emails across timer invocations/reboots. The report is saved **before**
+  SMTP. If a process crashes during delivery, SMTP outcome is treated as
+  uncertain: the program **will not resend** automatically, avoiding a
+  duplicate. An operator must inspect email/logs before manually resolving
+  an uncertain notification.
+- Each failed audit backs off for at least **15 minutes**, increasing to
+  60 minutes for repeated failures; a recent audit also throttles new
+  stock events. The public stock requests have an independent persisted
+  HTTP 429/5xx cooldown. No successful audit is repeated while the same
+  configuration remains available.
+- A `LIMIT REACHED`, inconclusive account inventory, unsafe quote or missing
+  agreement indicator can never authorize a purchase. Incomplete audits are
+  logged for a later retry, not emailed as accepted purchase quotations.
+
+**Deploy on Ubuntu** (after pulling the latest GitHub commit):
+
+```bash
+sudo git -C /opt/ovh-ksle-monitor pull --ff-only
+sudo install -m 0644 \
+  /opt/ovh-ksle-monitor/systemd/ovh-ksle-commercial-watch.service \
+  /etc/systemd/system/ovh-ksle-commercial-watch.service
+sudo install -m 0644 \
+  /opt/ovh-ksle-monitor/systemd/ovh-ksle-commercial-watch.timer \
+  /etc/systemd/system/ovh-ksle-commercial-watch.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now ovh-ksle-commercial-watch.timer
+sudo systemctl status ovh-ksle-commercial-watch.timer --no-pager
+```
+
+The service expects existing `0600` root-owned files
+`/etc/ovh-ksle-monitor.env` (SMTP) and `/etc/ovh-ksle-order.env` (OVH API,
+`OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00`, `OVH_AUTO_BUY_MAX_MONTHLY_EUR=37.00`,
+`OVH_AUTO_BUY_ENABLED=false`). No API-key rotation or new permissions are
+needed if Phase I already works. The root-only watch journal lives at
+`/var/lib/ovh-ksle-purchase/commercial-watch.json` (mode `0600`, directory
+`0700`). Do **not** edit/delete it to clear an uncertain SMTP outcome.
+
+**Inspect status and recent logs**:
+
+```bash
+sudo /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py --commercial-watch-status
+sudo journalctl -u ovh-ksle-commercial-watch.service -n 40 --no-pager
+```
+
+**Disable the optional watcher without stopping stock alerts**:
+
+```bash
+sudo systemctl disable --now ovh-ksle-commercial-watch.timer
+```
+
+This new workflow is the **commercial-notification phase**, not automatic
+purchasing. OVHcloud supports an actual order-creation operation
+`POST /order/cart/{cartId}/checkout`, but this project deliberately omits that
+route. A paid order would additionally require payment authorization and
+independent, reliable checks of the **monthly total including VAT**, setup
+fees, legal **zero commitment**, and a durable global two-server quota.
+`P1M` alone is not proof of no commitment. Those commercial assurances are
+not yet available to this automation, so real checkout/payment remain
+**blocked** regardless of timer settings or API permissions.
+
 ## Troubleshooting
 
 | Symptom | Check |

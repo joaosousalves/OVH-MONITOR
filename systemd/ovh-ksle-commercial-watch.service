@@ -1,0 +1,19 @@
+[Unit]
+Description=OVHcloud KS-LE-6 commercial audit on new stock (no checkout)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/ovh-ksle-monitor.env
+EnvironmentFile=/etc/ovh-ksle-order.env
+ExecStart=/usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py --commercial-watch
+StateDirectory=ovh-ksle-purchase
+StateDirectoryMode=0700
+TimeoutStartSec=180
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+NoNewPrivileges=true

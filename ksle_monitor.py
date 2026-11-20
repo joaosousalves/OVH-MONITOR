@@ -545,6 +545,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="Phase E: manual quote + payment readiness; NEVER submit checkout or pay")
     group.add_argument("--commercial-audit", action="store_true",
                        help="Read-only account scan + temporary cart tax/renewal/commitment audit; NO checkout")
+    group.add_argument("--commercial-watch", action="store_true",
+                       help="Opt-in commercial audit watcher: stock edge, cooldown, persistent email deduplication")
+    group.add_argument("--commercial-watch-status", action="store_true",
+                       help="Read-only commercial watcher state, no stock or email")
     group.add_argument("--reconcile-account", action="store_true",
                        help="GET-only KS-LE-6 service inventory against 2-server limit; no cart/order")
     group.add_argument("--reconcile-pending-orders", action="store_true",
@@ -601,6 +605,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.commercial_audit:
             from commercial_audit import run_commercial_audit
             return run_commercial_audit()
+        if args.commercial_watch:
+            from commercial_watch import run_commercial_watch
+            return run_commercial_watch()
+        if args.commercial_watch_status:
+            from commercial_watch import run_commercial_watch_status
+            return run_commercial_watch_status()
         if args.list_test_stock:
             from order_probe import TEST_PLANS
             plan_code = TEST_PLANS[args.test_plan]
