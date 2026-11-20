@@ -548,7 +548,7 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--check", action="store_true", help="Check stock without sending email or changing history")
     group.add_argument("--list", action="store_true", help="Print all API-reported locations and configurations")
     group.add_argument("--list-test-stock", action="store_true",
-                       help="Read-only stock check for --test-plan (KS-LE-1 or KS-LE-6)")
+                       help="Read-only stock check for --test-plan (KS-LE-1, KS-LE-3 or KS-LE-6)")
     group.add_argument("--list-eco-options", action="store_true",
                        help="Read-only live stock for KS-LE-1 to KS-LE-6; no credentials")
     group.add_argument("--purchase-quota-status", action="store_true",
@@ -591,7 +591,7 @@ def main(argv: list[str] | None = None) -> int:
                        help="Phase C: GET-only recorded order status, never retries")
     parser.add_argument("--datacenter", default="bhs", help="Datacenter for --test-order (default: bhs)")
     parser.add_argument("--storage", default="preferred", help="Storage addon code for --test-order (default: preferred)")
-    parser.add_argument("--test-plan", choices=("ks-le-6", "ks-le-1"), default="ks-le-6",
+    parser.add_argument("--test-plan", choices=("ks-le-6", "ks-le-1", "ks-le-3"), default="ks-le-6",
                         help="Product for manual --test-order only; stock timer remains KS-LE-6")
     parser.add_argument("--test-fqn", default=None,
                         help="Exact stock FQN for manual cart test; selects its RAM and storage")

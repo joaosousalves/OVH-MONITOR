@@ -28,7 +28,11 @@ from cart_identity import (
 BASE_URL = "https://api.eu.ovhcloud.com/v1"
 TIME_URL = "https://api.eu.ovhcloud.com/1.0/auth/time"
 PLAN_CODE = "27skle06-v1"
-TEST_PLANS = {"ks-le-6": PLAN_CODE, "ks-le-1": "27skle01-v1"}
+TEST_PLANS = {
+    "ks-le-6": PLAN_CODE,
+    "ks-le-1": "27skle01-v1",
+    "ks-le-3": "27skle03-v1",
+}
 PREFERRED_STORAGE_OPTION = "hybridsoftraid-2x4000sa-2x500nvme-27skle06-v1"
 DATACENTERS = {"bhs", "fra", "gra", "lon", "rbx", "sbg", "waw"}
 LOGGER = logging.getLogger("ksle-order-probe")
@@ -415,6 +419,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
 
     if plan_code not in TEST_PLANS.values():
         raise OrderProbeError("Unsupported cart-test product")
+    if plan_code == TEST_PLANS["ks-le-3"] and target_fqn is None:
+        raise OrderProbeError("KS-LE-3 diagnostic requires an exact --test-fqn")
     if target_fqn is not None:
         parse_hardware_fqn(target_fqn, plan_code)
         # The CLI converts its default --storage preferred to the
@@ -424,7 +430,7 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
         if storage_option not in ("preferred", "default", PREFERRED_STORAGE_OPTION):
             raise OrderProbeError("Do not combine --test-fqn with a different --storage value")
     elif plan_code != PLAN_CODE and storage_option == PREFERRED_STORAGE_OPTION:
-        raise OrderProbeError("Use --storage default for KS-LE-1")
+        raise OrderProbeError("Use an exact --test-fqn or --storage default for other test plans")
     catalog = client.request("GET", "/order/catalog/public/eco", query={"ovhSubsidiary": subsidiary})
     configurations, addons = catalog_selection(catalog, storage_option, datacenter, plan_code,
                                                target_fqn=target_fqn)
@@ -538,6 +544,12 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
     ck = os.getenv("OVH_CONSUMER_KEY", "").strip()
     if test_plan not in TEST_PLANS:
         LOGGER.error("Unsupported test product: %s", test_plan)
+        return 1
+    # KS-LE-3 is only a diagnostic probe, never a monitored or purchasable
+    # target. Require a concrete, freshly rechecked stock match before any
+    # authenticated cart mutation, instead of guessing a catalog default.
+    if test_plan == "ks-le-3" and target_fqn is None:
+        LOGGER.error("KS-LE-3 diagnostic requires --test-fqn from --list-test-stock; no cart created")
         return 1
     storage_code = PREFERRED_STORAGE_OPTION if storage == "preferred" else storage
     try:

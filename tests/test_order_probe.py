@@ -459,6 +459,67 @@ class OrderProbeTests(unittest.TestCase):
             probe.test_order(fake, plan_code=probe.TEST_PLANS["ks-le-1"])
         self.assertFalse(fake.calls)
 
+    def test_ks_le_3_requires_exact_stock_fqn_before_any_api_calls(self):
+        fake = FakeClient()
+        with self.assertRaisesRegex(probe.OrderProbeError, "exact --test-fqn"):
+            probe.test_order(fake, plan_code=probe.TEST_PLANS["ks-le-3"],
+                             storage_option="default")
+        self.assertFalse(fake.calls)
+        with patch.object(probe, "OVHCartClient") as client:
+            self.assertEqual(probe.run_test_order("bhs", "default", "ks-le-3"), 1)
+        client.assert_not_called()
+
+    def test_ks_le_3_available_exact_fqn_uses_p1m_and_deletes_test_cart(self):
+        plan = probe.TEST_PLANS["ks-le-3"]
+        memory = "ram-32g-ddr4-ecc-2666"
+        storage = "softraid-2x4000sa"
+        fqn = f"{plan}.{memory}.{storage}"
+        catalog_plan = {
+            "planCode": plan,
+            "configurations": CATALOG["plans"][0]["configurations"],
+            "addonFamilies": [
+                {"name": "memory", "mandatory": True,
+                 "addons": [f"{memory}-{plan}"], "default": f"{memory}-{plan}"},
+                {"name": "storage", "mandatory": True,
+                 "addons": [f"{storage}-{plan}"], "default": f"{storage}-{plan}"},
+            ],
+        }
+        fake = FakeClient(offers=[{
+            "planCode": plan, "prices": [
+                {"duration": "P12M", "pricingMode": "default"},
+                {"duration": "P1M", "pricingMode": "default"},
+            ],
+        }])
+        with patch.dict(CATALOG, {"plans": CATALOG["plans"] + [catalog_plan]}):
+            with patch.object(probe, "verify_available_test_fqn") as stock_check:
+                with patch.object(probe, "OVHCartClient", return_value=fake):
+                    with patch.dict(probe.os.environ, {"OVH_TOKEN": "offline-test"}):
+                        with patch("builtins.print") as printed:
+                            rc = probe.run_test_order("bhs", "preferred", "ks-le-3", fqn)
+        self.assertEqual(rc, 0)
+        stock_check.assert_called_once_with(plan, fqn, "bhs")
+        self.assertIn(plan, printed.call_args.args[0])
+        posts = [(path, body) for method, path, body, _ in fake.calls if method == "POST"]
+        base = [body for path, body in posts if path.endswith("/eco")]
+        self.assertEqual(len(base), 1)
+        self.assertEqual(base[0]["planCode"], plan)
+        self.assertEqual(base[0]["duration"], "P1M")
+        self.assertEqual([body["planCode"] for path, body in posts
+                          if path.endswith("/eco/options")],
+                         [f"{memory}-{plan}", f"{storage}-{plan}"])
+        self.assertFalse(any(path.endswith("/checkout") for path, _ in posts))
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_ks_le_3_unavailable_fqn_never_creates_cart(self):
+        import ksle_monitor as monitor
+        plan = probe.TEST_PLANS["ks-le-3"]
+        fqn = plan + ".ram-32g-ddr4-ecc-2666.softraid-2x4000sa"
+        unavailable = monitor.Stock(fqn, "softraid-2x4000sa", "gra", "unavailable")
+        with patch.object(monitor, "retrieve_stock", return_value=[unavailable]):
+            with patch.object(probe, "OVHCartClient") as client:
+                self.assertEqual(probe.run_test_order("gra", "preferred", "ks-le-3", fqn), 1)
+        client.assert_not_called()
+
     def test_unapproved_cart_test_plan_blocked(self):
         fake = FakeClient()
         with self.assertRaises(probe.OrderProbeError):

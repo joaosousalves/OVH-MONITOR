@@ -279,6 +279,44 @@ addon plan code (which ends in `-27skle06-v1`).
 The test's last step is a **GET** request to `/order/cart/{cartId}/checkout`.
 No purchase endpoint is present anywhere in the test-order API client.
 
+### Diagnose a KS-LE-3 cart with real stock (never purchase)
+
+As a separate manual diagnostic, the monitor can now inspect an **available
+KS-LE-3** (`27skle03-v1`) when KS-LE-6 has no stock. This does **not** add
+KS-LE-3 to monitoring, purchase limits, storage preferences or automated
+commercial checks. It never places an order or charges a payment method.
+
+First, list the exact RAM/disk configurations and datacenters reported by
+the OVH public API, without credentials or a cart:
+
+```bash
+cd /opt/ovh-ksle-monitor
+python3 ksle_monitor.py --list-test-stock --test-plan ks-le-3
+```
+
+If (and only if) one line has an orderable status such as `1H-low`, copy **its
+complete FQN** and datacenter into the command below. The placeholders are
+not real hardware configurations; do not copy one from another datacenter.
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ksle3-cart-diagnostic \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --test-order --test-plan ks-le-3 --datacenter bhs \
+  --test-fqn 'REPLACE_WITH_AVAILABLE_27skle03-v1.FQN.FROM_LIST'
+```
+
+Replace `bhs` too if the available line was in another supported datacenter.
+The program checks the exact FQN/datacenter against fresh live stock **before
+using credentials or creating a cart**. It then selects that RAM and storage
+from the PT catalog, accepts only an exact `P1M`/default offer, reads a
+temporary **GET checkout quote**, and tries to delete the cart. All checkout
+submission/payment POST routes stay blocked. If there is no eligible stock,
+stop after the read-only listing and try again later. Neither command changes
+the active KS-LE-6 timers or alert history. The GET quote is only a diagnostic
+of the chosen KS-LE-3, not proof of KS-LE-6 hardware or its price.
+
 ### Quote an exact available KS-LE-1 configuration (never purchase)
 
 The default KS-LE-1 addon selection can be out of stock even while another

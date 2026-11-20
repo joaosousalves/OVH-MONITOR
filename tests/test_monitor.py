@@ -90,6 +90,20 @@ class MonitorTests(unittest.TestCase):
         send.assert_not_called()
         self.assertIn(fqn, output.call_args.args[0])
 
+    def test_ks_le_3_stock_listing_does_not_change_monitor_or_send_email(self):
+        plan = "27skle03-v1"
+        fqn = plan + ".ram-32g-ddr4-ecc-2666.softraid-2x4000sa"
+        stocks = [monitor.Stock(fqn, "softraid-2x4000sa", "gra", "1H-high")]
+        with patch.object(monitor, "retrieve_stock", return_value=stocks) as fetch:
+            with patch.object(monitor, "send_mail") as send:
+                with patch("builtins.print") as output:
+                    rc = monitor.main(["--list-test-stock", "--test-plan", "ks-le-3"])
+        self.assertEqual(rc, 0)
+        fetch.assert_called_once_with(plan_code=plan)
+        send.assert_not_called()
+        self.assertIn(fqn, output.call_args.args[0])
+        self.assertEqual(monitor.PLAN_CODE, "27skle06-v1")
+
     def test_non_orderable_statuses_are_not_available(self):
         for status in ["unavailable", "unknown", "comingSoon", "weird"]:
             with self.subTest(status=status):
