@@ -316,6 +316,49 @@ Stock can disappear between preflight and quote. Checkout and payment remain
 disabled. KS-LE-2 does not count toward the KS-LE-6 two-server cap and is
 **never** considered for KS-LE-6 monitoring, alerting or purchase.
 
+#### Optional detailed cart audit (no checkout or payment)
+
+After a successful `--check-test-config`, run the more detailed manual audit
+instead of `--test-order` if you want to inspect VAT, setup lines, item-level
+monthly price labels, contract indicators and optional GET-only cart readback:
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ksle2-commercial-diagnostic \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --audit-test-cart --test-plan ks-le-2 --datacenter gra \
+  --test-fqn '27skle02-v1.ram-32g-ddr3-ecc-1333.softraid-2x2000sa'
+```
+
+This command creates **one temporary cart**, repeats the exact live-stock
+check and deletes the cart on exit when possible. It never calls POST
+checkout or payment. No additional API permissions are required for the
+original quote; optional cart GET readback needs read-only `/order/cart/*/item`
+and `/order/cart/*/item/*/configuration` rights, and returns `UNVERIFIED` if
+denied. No credentials, cart IDs, account records, contract URLs or raw
+descriptions appear in the diagnostic report.
+
+Important evidence rules:
+
+- An initial `prices.withTax.text` display alone is not a structured VAT
+  breakdown; numeric EUR net, tax and gross must reconcile or the report says
+  `UNVERIFIED`/`CONFLICT`.
+- `INSTALLATION` and `DURATION` checkout detail lines may use an unknown tax
+  basis. A displayed duration charge is **not** a proven monthly renewal fee.
+- Each item-level `RENEW` price is only indicative; a VAT-inclusive monthly
+  total is reported only when every component explicitly includes
+  `priceWithTax`. It never certifies future invoices.
+- Selecting `P1M` does **not** prove a legally commitment-free agreement.
+  Missing contract metadata and references remain `UNVERIFIED` for purchase.
+- Only a fully matching item/configuration GET readback can say `CART IDENTITY
+  VERIFIED`. For KS-LE-6, the purchase guard still uses its original stricter
+  128-GB RAM/disk allowlist; diagnostics for alternate models cannot relax it.
+
+The `--audit-test-cart` report is deliberately partial evidence, **not** an
+approval for automatic purchase or any change to the 37 EUR/80 EUR KS-LE-6
+financial guardrails.
+
 ### Diagnose a KS-LE-3 cart with real stock (never purchase)
 
 As a separate manual diagnostic, the monitor can now inspect an **available

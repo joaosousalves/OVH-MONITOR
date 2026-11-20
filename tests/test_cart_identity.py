@@ -107,6 +107,43 @@ class CartIdentityTests(unittest.TestCase):
         params["cart_items"] *= 30
         self.assertEqual(identity.inspect_cart_identity(**params).status, "UNVERIFIED")
 
+    def test_manual_ks_le_2_identity_verifies_exact_catalog_codes(self):
+        plan = "27skle02-v1"
+        fqn = plan + ".ram-32g-ddr3-ecc-1333.softraid-2x2000sa"
+        addons = [
+            "bandwidth-500-ks-gen0",
+            "ram-32g-ddr3-ecc-1333-27skle02-v1",
+            "softraid-2x2000sa-27skle02-v1",
+        ]
+        params = dict(
+            plan_code=plan, fqn=fqn, datacenter="gra", base_item_id=201,
+            addons=addons,
+            configurations={"dedicated_datacenter": "gra", "region": "europe",
+                            "dedicated_os": "none_64.en"},
+            cart_items=[
+                {"planCode": code, "itemId": 201 + idx,
+                 "duration": "P1M", "pricingMode": "default", "quantity": 1}
+                for idx, code in enumerate((plan, *addons))
+            ],
+            cart_configurations=[
+                {"label": "dedicated_datacenter", "value": "gra"},
+                {"label": "region", "value": "europe"},
+                {"label": "dedicated_os", "value": "none_64.en"},
+            ],
+        )
+        valid = identity.inspect_manual_cart_identity(**params)
+        self.assertEqual(valid.status, "VERIFIED")
+        params["cart_items"][2]["duration"] = "P12M"
+        self.assertEqual(identity.inspect_manual_cart_identity(**params).status, "CONFLICT")
+        params["cart_items"][2]["duration"] = "P1M"
+        params["cart_configurations"][0]["value"] = "bhs"
+        self.assertEqual(identity.inspect_manual_cart_identity(**params).status, "CONFLICT")
+        params["cart_configurations"][0]["value"] = "gra"
+        params["cart_items"] = [{"planCode": plan}]
+        self.assertEqual(identity.inspect_manual_cart_identity(**params).status, "UNVERIFIED")
+        params["fqn"] = "27skle06-v1.ram-128g-ddr4-ecc-2400.softraid-2x1920nvme"
+        self.assertEqual(identity.inspect_manual_cart_identity(**params).status, "CONFLICT")
+
 
 if __name__ == "__main__":
     unittest.main()

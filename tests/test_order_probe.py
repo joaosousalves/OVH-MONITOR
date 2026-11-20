@@ -561,6 +561,132 @@ class OrderProbeTests(unittest.TestCase):
         self.assertFalse(any(path.endswith("/checkout") for path, _ in posts))
         self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
 
+    def test_ks_le_2_detailed_quote_uses_get_readback_and_redacted_report(self):
+        plan = probe.TEST_PLANS["ks-le-2"]
+        memory = "ram-32g-ddr3-ecc-1333"
+        storage = "softraid-2x2000sa"
+        fqn = f"{plan}.{memory}.{storage}"
+        codes = [plan, "bandwidth-500-ks-gen0", f"{memory}-{plan}", f"{storage}-{plan}"]
+        catalog_plan = {
+            "planCode": plan,
+            "configurations": CATALOG["plans"][0]["configurations"],
+            "addonFamilies": [
+                {"name": "bandwidth", "mandatory": True,
+                 "addons": [codes[1]], "default": codes[1]},
+                {"name": "memory", "mandatory": True,
+                 "addons": [codes[2]], "default": codes[2]},
+                {"name": "storage", "mandatory": True,
+                 "addons": [codes[3]], "default": codes[3]},
+            ],
+        }
+
+        class DetailedFake(FakeClient):
+            def request(self, method, path, payload=None, query=None):
+                result = super().request(method, path, payload, query)
+                if method == "GET" and path == "/order/cart/cart-123/item":
+                    return [
+                        {"planCode": code, "itemId": idx, "duration": "P1M",
+                         "pricingMode": "default", "quantity": 1}
+                        for idx, code in enumerate(codes, 12345)
+                    ]
+                if method == "GET" and path == "/order/cart/cart-123/item/12345/configuration":
+                    return [
+                        {"label": "dedicated_datacenter", "value": "gra"},
+                        {"label": "region", "value": "europe"},
+                        {"label": "dedicated_os", "value": "none_64.en"},
+                    ]
+                if method == "GET" and path.endswith("/checkout"):
+                    return {
+                        "prices": {
+                            "withoutTax": {"value": "33.98", "currencyCode": "EUR"},
+                            "tax": {"value": "7.82", "currencyCode": "EUR"},
+                            "withTax": {"value": "41.80", "currencyCode": "EUR",
+                                        "text": "41.80 EUR"},
+                        },
+                        "details": [{"detailType": "INSTALLATION", "totalPrice": {
+                            "currencyCode": "EUR", "value": "10.00"},
+                            "description": "PRIVATE-CUSTOMER-ADDRESS"}],
+                        "commitmentDuration": "P0M",
+                    }
+                if method == "POST" and (path.endswith("/eco") or path.endswith("/eco/options")):
+                    result = dict(result)
+                    result["prices"] = [{"label": "RENEW",
+                                         "price": {"currencyCode": "EUR", "value": "5.00"},
+                                         "priceWithTax": {"currencyCode": "EUR", "value": "6.15"}}]
+                    result["duration"] = "P1M"
+                return result
+
+        fake = DetailedFake(offers=[{
+            "planCode": plan, "prices": [{"duration": "P1M", "pricingMode": "default"}],
+        }])
+        with patch.dict(CATALOG, {"plans": CATALOG["plans"] + [catalog_plan]}):
+            with patch.object(probe, "verify_available_test_fqn") as verify:
+                with patch.object(probe, "OVHCartClient", return_value=fake):
+                    with patch.dict(probe.os.environ, {"OVH_TOKEN": "offline-test"}):
+                        with patch("builtins.print") as output:
+                            rc = probe.run_test_order("gra", "preferred", "ks-le-2", fqn,
+                                                      detailed=True)
+        self.assertEqual(rc, 0)
+        verify.assert_called_once_with(plan, fqn, "gra")
+        report = output.call_args_list[-1].args[0]
+        self.assertIn("INITIAL VAT: 33.98 EUR net", report)
+        self.assertIn("ITEM RENEW WITH VAT: 24.60 EUR", report)
+        self.assertIn("CART IDENTITY VERIFIED", report)
+        self.assertNotIn("PRIVATE-CUSTOMER-ADDRESS", report)
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in fake.calls))
+
+    def test_detailed_quote_missing_fields_is_unverified_and_cleans_cart(self):
+        fake = FakeClient()
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        with patch.object(probe, "verify_available_test_fqn"):
+            with patch.object(probe, "OVHCartClient", return_value=fake):
+                with patch.dict(probe.os.environ, {"OVH_TOKEN": "offline-test"}):
+                    with patch("builtins.print") as output:
+                        rc = probe.run_test_order("bhs", "preferred", "ks-le-6", fqn,
+                                                  detailed=True)
+        self.assertEqual(rc, 0)
+        report = output.call_args_list[-1].args[0]
+        self.assertIn("INITIAL VAT: UNVERIFIED", report)
+        self.assertIn("ITEM RENEW WITH VAT: UNVERIFIED", report)
+        self.assertIn("CART IDENTITY UNVERIFIED", report)
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_detailed_quote_cart_identity_conflict_is_failure_after_cleanup(self):
+        fake = ReadbackClient(mismatched_dc=True)
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        with patch.object(probe, "verify_available_test_fqn"):
+            with patch.object(probe, "OVHCartClient", return_value=fake):
+                with patch.dict(probe.os.environ, {"OVH_TOKEN": "offline-test"}):
+                    with patch("builtins.print") as output:
+                        rc = probe.run_test_order("bhs", "preferred", "ks-le-6", fqn,
+                                                  detailed=True)
+        self.assertEqual(rc, 1)
+        self.assertIn("CART IDENTITY CONFLICT", output.call_args_list[-1].args[0])
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+
+    def test_detailed_quote_addon_non_monthly_blocks_and_cleans_cart(self):
+        class WrongDuration(FakeClient):
+            def request(self, method, path, payload=None, query=None):
+                result = super().request(method, path, payload, query)
+                if method == "POST" and path.endswith("/eco/options"):
+                    result = dict(result)
+                    result["duration"] = "P12M"
+                return result
+
+        fake = WrongDuration()
+        fqn = ("27skle06-v1.ram-128g-ddr4-ecc-2400."
+               "hybridsoftraid-2x4000sa-2x500nvme")
+        with patch.object(probe, "verify_available_test_fqn"):
+            with patch.object(probe, "OVHCartClient", return_value=fake):
+                with patch.dict(probe.os.environ, {"OVH_TOKEN": "offline-test"}):
+                    self.assertEqual(probe.run_test_order("bhs", "preferred", "ks-le-6", fqn,
+                                                          detailed=True), 1)
+        self.assertEqual(fake.calls[-1][:2], ("DELETE", "/order/cart/cart-123"))
+
     def test_ks_le_2_requires_fqn_and_read_only_catalog_match(self):
         plan = probe.TEST_PLANS["ks-le-2"]
         fqn = f"{plan}.ram-32g-ddr3-ecc-1333.softraid-2x2000sa"

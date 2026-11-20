@@ -563,6 +563,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--diagnose-prices", action="store_true", help="Inspect KS-LE-6 public catalog price structure without credentials")
     group.add_argument("--send-test-email", action="store_true", help="Send a test email (no stock check)")
     group.add_argument("--test-order", action="store_true", help="Test an Eco cart and quote; NEVER submit an order or pay")
+    group.add_argument("--audit-test-cart", action="store_true",
+                       help="Temporary cart quote + privacy-safe fee/renewal/contract/readback evidence; no checkout")
     group.add_argument("--purchase-preview", action="store_true",
                        help="Phase B: KS-LE-6 preview with EUR price cap, NO checkout or payment")
     group.add_argument("--purchase-preflight", action="store_true",
@@ -667,6 +669,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.test_order:
             from order_probe import run_test_order
             return run_test_order(args.datacenter, args.storage, args.test_plan, args.test_fqn)
+        if args.audit_test_cart:
+            from order_probe import run_test_order
+            return run_test_order(args.datacenter, args.storage, args.test_plan,
+                                  args.test_fqn, detailed=True)
         if args.diagnose_prices:
             from pricing import fetch_catalog, diagnostic_summary
             print(json.dumps(diagnostic_summary(fetch_catalog()), indent=2))

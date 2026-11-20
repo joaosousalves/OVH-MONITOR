@@ -41,6 +41,7 @@ class QuoteBreakdownTests(unittest.TestCase):
         self.assertEqual(result.status, "LINES_PRESENT")
         self.assertEqual(result.installation_lines, 2)
         self.assertEqual(str(result.installation_listed_eur), "7.50")
+        self.assertEqual(str(result.duration_listed_eur), "40.00")
         self.assertEqual((result.duration_lines, result.promotion_lines, result.other_lines), (1, 1, 1))
         self.assertIn("tax basis unknown", result.summary())
         self.assertNotIn("PRIVATE-PERSON", result.summary())

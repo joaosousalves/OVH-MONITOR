@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 from commitment_guard import CommitmentSafetyError, inspect_commitment
 from cart_identity import (
-    CartIdentityEvidence, MAX_ROWS, inspect_cart_identity,
+    CartIdentityEvidence, MAX_ROWS, inspect_cart_identity, inspect_manual_cart_identity,
     unavailable as identity_unavailable,
 )
 
@@ -498,7 +498,7 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             # RENEW labels do not prove VAT-inclusive recurring charges.
             renewal_observer(tuple(item_responses))
         if identity_observer is not None:
-            if target_fqn is None or plan_code != PLAN_CODE:
+            if target_fqn is None:
                 identity_observer(identity_unavailable())
             else:
                 try:
@@ -524,12 +524,18 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                     LOGGER.warning("Optional cart identity GET unavailable (no purchase); evidence unverified")
                     identity_observer(identity_unavailable())
                 else:
-                    identity_observer(inspect_cart_identity(
+                    identity_args = dict(
                         fqn=target_fqn, datacenter=datacenter,
                         base_item_id=item_id, addons=addons,
                         configurations=configurations,
                         cart_items=cart_items, cart_configurations=cart_configs,
-                    ))
+                    )
+                    if plan_code == PLAN_CODE:
+                        identity_observer(inspect_cart_identity(**identity_args))
+                    else:
+                        identity_observer(inspect_manual_cart_identity(
+                            plan_code=plan_code, **identity_args,
+                        ))
         return f"Carrinho de teste validado: {plan_code}, {datacenter.upper()}, addons={addons}; total com IVA: {price}. Nenhuma encomenda criada."
     finally:
         if cart_id is not None:
@@ -541,7 +547,7 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
 
 
 def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
-                   target_fqn: str | None = None) -> int:
+                   target_fqn: str | None = None, *, detailed: bool = False) -> int:
     token = os.getenv("OVH_TOKEN", "").strip()
     ak = os.getenv("OVH_APPLICATION_KEY", "").strip()
     secret = os.getenv("OVH_APPLICATION_SECRET", "").strip()
@@ -554,6 +560,9 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
     if TEST_PLANS[test_plan] in EXACT_FQN_TEST_PLANS and target_fqn is None:
         LOGGER.error("Alternate-model diagnostic requires --test-fqn from --list-test-stock; no cart created")
         return 1
+    if detailed and target_fqn is None:
+        LOGGER.error("Detailed cart audit requires exact --test-fqn; no cart created")
+        return 1
     storage_code = PREFERRED_STORAGE_OPTION if storage == "preferred" else storage
     try:
         if target_fqn is not None:
@@ -561,9 +570,41 @@ def run_test_order(datacenter: str, storage: str, test_plan: str = "ks-le-6",
         client = OVHCartClient(
             token, application_key=ak, application_secret=secret, consumer_key=ck
         )
+        observed: dict[str, Any] = {}
+
+        def observe_quote(quote: Any) -> None:
+            observed["quote"] = quote
+
+        def observe_items(items: tuple[Any, ...]) -> None:
+            # A fixed commitment or an explicit non-monthly addon response is
+            # not acceptable even in diagnostic mode. Test-order always
+            # deletes its temporary cart in finally.
+            for item in items:
+                if isinstance(item, dict) and item.get("duration", "P1M") != "P1M":
+                    raise OrderProbeError("Cart addon returned a non-monthly duration")
+                try:
+                    inspect_commitment(item)
+                except CommitmentSafetyError as exc:
+                    raise OrderProbeError(str(exc)) from exc
+            observed["items"] = items
+
         result = test_order(client, datacenter=datacenter, storage_option=storage_code,
-                            plan_code=TEST_PLANS[test_plan], target_fqn=target_fqn)
+                            plan_code=TEST_PLANS[test_plan], target_fqn=target_fqn,
+                            quote_validator=observe_quote if detailed else None,
+                            renewal_observer=observe_items if detailed else None,
+                            identity_observer=(lambda item: observed.__setitem__("identity", item))
+                            if detailed else None)
         print(result)
+        if detailed:
+            if "quote" not in observed or "items" not in observed:
+                raise OrderProbeError("Incomplete commercial evidence; no purchase")
+            from manual_cart_audit import manual_cart_report
+            print(manual_cart_report(observed["quote"], observed["items"],
+                                     observed.get("identity")))
+            identity = observed.get("identity")
+            if isinstance(identity, CartIdentityEvidence) and identity.status == "CONFLICT":
+                LOGGER.error("Detailed cart audit found an identity mismatch; no purchase")
+                return 1
         return 0
     except OrderProbeError as exc:
         LOGGER.error("Test-order failed (no purchase was made): %s", exc)

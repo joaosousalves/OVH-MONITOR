@@ -28,6 +28,7 @@ class CartBreakdown:
     duration_lines: int = 0
     promotion_lines: int = 0
     other_lines: int = 0
+    duration_listed_eur: Decimal | None = None
 
     def summary(self) -> str:
         if self.status != "LINES_PRESENT":
@@ -42,6 +43,8 @@ class CartBreakdown:
             f"listed amount {self.installation_listed_eur:.2f} EUR "
             "(tax basis unknown); "
             f"{self.duration_lines} DURATION line(s), "
+            f"listed {self.duration_listed_eur:.2f} EUR "
+            "(tax basis unknown; not a renewal invoice); "
             f"{self.promotion_lines} promotion line(s), "
             f"{self.other_lines} unclassified line(s). "
             "A zero or missing INSTALLATION line does not guarantee "
@@ -65,6 +68,7 @@ def inspect_checkout_details(quote: Any) -> CartBreakdown:
         return CartBreakdown("UNVERIFIED", "checkout detail lines are empty or unexpectedly numerous")
 
     setup = Decimal("0.00")
+    duration_total = Decimal("0.00")
     installs = durations = promos = others = 0
     for row in details:
         if not isinstance(row, dict):
@@ -84,11 +88,12 @@ def inspect_checkout_details(quote: Any) -> CartBreakdown:
             setup += amount
         elif kind == "DURATION":
             durations += 1
+            duration_total += amount
         elif kind in PROMO_TYPES:
             promos += 1
         else:
             others += 1
     return CartBreakdown(
         "LINES_PRESENT", "checkout returned structured EUR detail lines",
-        installs, setup, durations, promos, others,
+        installs, setup, durations, promos, others, duration_total,
     )
