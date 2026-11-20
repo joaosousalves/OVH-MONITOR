@@ -1359,6 +1359,54 @@ python3 -m unittest discover -s tests -q
 python3 ksle_monitor.py --confirmed-terms
 ```
 
+## Phase S — full two-order checkout rehearsal (offline, never billable)
+
+The new `--simulate-safe-purchase` exercises the **actual future-purchase
+decision gate** together with the persistent two-slot journal and a strictly
+local fake checkout gateway. It makes no OVH API call, sends no SMTP email,
+does not load your account keys, and cannot invoke a real checkout or payment.
+
+```bash
+cd /opt/ovh-ksle-monitor
+python3 ksle_monitor.py --simulate-safe-purchase
+```
+
+The rehearsal checks:
+
+1. Choose the highest-priority available 128 GB KS-LE-6 in EU/Canada.
+2. Require **synthetic** proof of exact plan/RAM/disks/datacenter, 37 EUR
+   monthly and 80 EUR initial ceilings, and no 12/24-month commitment.
+3. Apply an additional hard block when either amount exceeds the **owner's
+   confirmed price for the selected disk layout**, even below the absolute
+   budget cap. An unknown monthly amount or unverified contract also blocks.
+4. Persist a quota slot **before** the fake submission, and submit exactly
+   once. No second attempt is allowed until an external confirmation has
+   been **simulated**. A timeout or apparent rejection becomes `unknown`,
+   and remains blocked across a simulated process restart.
+5. Show two fake orders of different disk layouts, then two identical disk
+   layouts; a third order always fails the shared 2/2 limit.
+6. Reject reused commercial evidence from a **different FQN or datacenter**.
+
+Only the offline simulation generates positive renewal, payment and legal
+proof. In live use, the commercial audit **does not** claim to have verified
+the exact quoted cart identity or binding contract conditions; its automatic
+purchase decision remains blocked. The simulated gateway's payload is an
+internal test format, **not** a documented OVH API checkout request.
+
+To upgrade and verify on Ubuntu:
+
+```bash
+sudo git -C /opt/ovh-ksle-monitor pull --ff-only
+cd /opt/ovh-ksle-monitor
+python3 -m unittest discover -s tests -q
+python3 ksle_monitor.py --simulate-safe-purchase
+```
+
+No new API keys, API permissions, timers or settings are needed. Keep
+`OVH_AUTO_BUY_ENABLED=false`. Live purchasing remains out of scope until
+an exact eligible cart/renewal/contract/payment proof path is developed,
+reviewed and explicitly authorized by the account owner.
+
 ## Troubleshooting
 
 | Symptom | Check |

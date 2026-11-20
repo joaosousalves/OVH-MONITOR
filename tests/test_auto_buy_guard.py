@@ -26,15 +26,17 @@ def stock(index: int = 0, dc: str = "bhs", status: str = "1H-high") -> Stock:
     return Stock(APPROVED_FQNS[index], STORAGE_PRIORITIES[index], dc, status)
 
 
-def evidence(used=0) -> PurchaseEvidence:
+def evidence(used=0, index=0, dc="bhs") -> PurchaseEvidence:
     # Synthetic evidence solely for the offline test environment. The live
     # commercial audit never asserts these legal/renewal proof flags.
     return PurchaseEvidence(
-        initial_including_vat=Decimal("80.00"), initial_quote_verified=True,
-        monthly_including_vat=Decimal("37.00"), monthly_renewal_verified=True,
+        initial_including_vat=Decimal("66.40"), initial_quote_verified=True,
+        monthly_including_vat=Decimal("33.20"), monthly_renewal_verified=True,
         no_fixed_commitment_verified=True, payment_method_ready=True,
         remote_slots_used=used, remote_inventory_verified=True,
         local_purchase_history_clear=True,
+        quote_fqn=APPROVED_FQNS[index], quote_datacenter=dc,
+        quote_identity_verified=True,
     )
 
 
@@ -50,7 +52,7 @@ class AutoBuyGateTests(unittest.TestCase):
         for index in range(4):
             for dc in policy().datacenters:
                 with self.subTest(index=index, dc=dc):
-                    result = assess_auto_buy(policy(), stock(index, dc), evidence())
+                    result = assess_auto_buy(policy(), stock(index, dc), evidence(index=index, dc=dc))
                     self.assertTrue(result.simulated_criteria_met)
 
     def test_two_sequential_orders_maximum_even_if_same_disks(self):
@@ -66,7 +68,7 @@ class AutoBuyGateTests(unittest.TestCase):
 
     def test_two_different_disks_use_same_global_quota(self):
         first = assess_auto_buy(policy(), stock(0), evidence(0))
-        second = assess_auto_buy(policy(), stock(3, "waw"), evidence(1))
+        second = assess_auto_buy(policy(), stock(3, "waw"), evidence(1, index=3, dc="waw"))
         self.assertTrue(first.simulated_criteria_met)
         self.assertTrue(second.simulated_criteria_met)
 
@@ -81,6 +83,28 @@ class AutoBuyGateTests(unittest.TestCase):
                 result = assess_auto_buy(policy(), stock(), actual)
                 self.assertFalse(result.simulated_criteria_met)
                 self.assertIn("monthly", result.summary())
+
+    def test_price_increase_below_absolute_caps_still_blocks(self):
+        for delta in (
+            {"initial_including_vat": Decimal("67.00")},
+            {"monthly_including_vat": Decimal("33.21")},
+        ):
+            with self.subTest(delta=delta):
+                changed = replace(evidence(), **delta)
+                result = assess_auto_buy(policy(), stock(), changed)
+                self.assertFalse(result.simulated_criteria_met)
+                self.assertIn("owner-confirmed disk price reference", result.summary())
+
+    def test_quote_for_wrong_fqn_or_datacenter_cannot_pass(self):
+        for changes in (
+            {"quote_fqn": APPROVED_FQNS[1]},
+            {"quote_datacenter": "gra"},
+            {"quote_identity_verified": False},
+        ):
+            with self.subTest(changes=changes):
+                result = assess_auto_buy(policy(), stock(), replace(evidence(), **changes))
+                self.assertFalse(result.simulated_criteria_met)
+                self.assertIn("not bound to exact FQN and datacenter", result.summary())
 
     def test_unverified_or_fixed_commitment_never_passes(self):
         actual = replace(evidence(), no_fixed_commitment_verified=False)

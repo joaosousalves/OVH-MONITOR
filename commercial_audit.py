@@ -248,6 +248,11 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         remote_slots_used=remote.upper_bound,
         remote_inventory_verified=not remote.overlap_unverified,
         local_purchase_history_clear=True,
+        quote_fqn=candidate.fqn,
+        quote_datacenter=candidate.datacenter,
+        # These labels come from the requested selection, not independently
+        # verified returned item identity. Never promote them to proof.
+        quote_identity_verified=False,
     )).summary()
     return (
         "COMMERCIAL AUDIT PARTIAL (NO PURCHASE): "

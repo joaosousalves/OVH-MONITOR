@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from ksle_monitor import Stock
+from confirmed_terms import for_storage
 from purchase_guard import (
     APPROVED_FQNS, DATACENTERS, PurchasePolicy, STORAGE_PRIORITIES,
 )
@@ -28,6 +29,12 @@ class PurchaseEvidence:
     remote_slots_used: int | None = None
     remote_inventory_verified: bool = False
     local_purchase_history_clear: bool = False
+    # A quote for another disk/datacenter must never be reused. A caller
+    # cannot mark quote_identity_verified unless independent OVH cart data
+    # confirms the exact selection; the live audit currently leaves it False.
+    quote_fqn: str | None = None
+    quote_datacenter: str | None = None
+    quote_identity_verified: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,6 +83,10 @@ def assess_auto_buy(policy: PurchasePolicy, candidate: Stock | None,
           or candidate.datacenter not in DATACENTERS
           or candidate.datacenter not in policy.datacenters):
         problems.append("model/RAM/disks/datacenter not approved")
+    if (candidate is None or not evidence.quote_identity_verified
+            or evidence.quote_fqn != candidate.fqn
+            or evidence.quote_datacenter != candidate.datacenter):
+        problems.append("cart price evidence not bound to exact FQN and datacenter")
 
     if (not evidence.remote_inventory_verified or
             type(evidence.remote_slots_used) is not int or
@@ -101,6 +112,21 @@ def assess_auto_buy(policy: PurchasePolicy, candidate: Stock | None,
         problems.append("final monthly renewal including VAT not verified")
     elif evidence.monthly_including_vat > policy.max_monthly_eur:
         problems.append("monthly EUR amount exceeds configured per-server limit")
+
+    # A lower absolute budget cap is not permission to silently accept an
+    # increase from the owner's exact confirmed offer. This extra constraint
+    # is per disk layout and complements, never replaces, live proof flags.
+    if (candidate is not None and candidate.fqn in APPROVED_FQNS
+            and candidate.storage in STORAGE_PRIORITIES):
+        reference = for_storage(candidate.storage)
+        if (evidence.initial_quote_verified
+                and _amount_is_valid(evidence.initial_including_vat)
+                and evidence.initial_including_vat > reference.first_payment_gross):
+            problems.append("initial EUR amount exceeds owner-confirmed disk price reference")
+        if (evidence.monthly_renewal_verified
+                and _amount_is_valid(evidence.monthly_including_vat)
+                and evidence.monthly_including_vat > reference.monthly_gross):
+            problems.append("monthly EUR amount exceeds owner-confirmed disk price reference")
 
     if not evidence.no_fixed_commitment_verified:
         problems.append("contractual freedom from 12/24-month commitment not verified")

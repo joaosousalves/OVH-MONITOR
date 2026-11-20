@@ -39,6 +39,9 @@ OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 # GET /me/order/*/details/*/extension
 # Do NOT grant POST /order/cart/*/checkout or POST /me/order/*/pay yet.
 # The --simulate-checkout command is fully offline and does not need a key.
+# The --simulate-safe-purchase command rehearses two orders with fake proof,
+# strict owner-confirmed reference prices and a disposable ledger. It also
+# requires no credentials and cannot submit a real order.
 # Phase C does NOT implement live checkout or automated email.
 
 # KS-LE-6 only; at most TWO total servers, same or different storage.

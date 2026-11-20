@@ -577,6 +577,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="Read local watchdog status only; no SMTP or OVH API")
     group.add_argument("--simulate-restock-flow", action="store_true",
                        help="Fully offline restock-to-commercial-email simulation (NO API, SMTP, checkout)")
+    group.add_argument("--simulate-safe-purchase", action="store_true",
+                       help="Fully offline two-order rehearsal: caps, quota, drift, idempotency (NO live checkout)")
     group.add_argument("--reconcile-account", action="store_true",
                        help="GET-only KS-LE-6 service inventory against 2-server limit; no cart/order")
     group.add_argument("--reconcile-pending-orders", action="store_true",
@@ -648,6 +650,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.simulate_restock_flow:
             from integration_simulation import run_restock_simulation
             return run_restock_simulation()
+        if args.simulate_safe_purchase:
+            from offline_purchase_flow import run_safe_purchase_simulation
+            return run_safe_purchase_simulation()
         if args.list_test_stock:
             from order_probe import TEST_PLANS
             plan_code = TEST_PLANS[args.test_plan]
