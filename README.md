@@ -1182,6 +1182,57 @@ monthly VAT-inclusive renewal or contract terms cannot be independently
 verified, the guard **blocks** purchase; it never assumes an unknown price
 is cheap enough.
 
+## Phase N — checkout price detail and commitment evidence checklist
+
+The existing **non-billable** `GET /order/cart/{cartId}/checkout` response is
+now inspected further, without any new HTTP route, OVH permission, or
+background timer. When an eligible KS-LE-6 configuration appears in the
+approved datacenters, the commercial audit (manual or five-minute watcher)
+will include:
+
+- **Initial amount with VAT**: strict EUR gross/net/tax equality against the
+  80.00 EUR ceiling. This reflects the complete temporary cart at that moment.
+- **Installation/detail lines**: if checkout provides structured `details`,
+  aggregate `INSTALLATION` entries and count `DURATION`, promotional, and
+  unknown line types. The listed installation amount is **not** treated as
+  VAT-inclusive unless separately proven. A missing or zero installation
+  entry is **not proof** that setup will always be free.
+- **Monthly renewal**: explicit VAT-inclusive item-level `RENEW` figures,
+  when available, are compared with 37.00 EUR; they remain *indicative*
+  rather than a certified final monthly invoice.
+- **No fixed commitment**: a `P0M`/zero metadata indicator is reported as
+  *indicative only*; `P1M` is a billing duration, **not** evidence that the
+  customer can cancel without a 12- or 24-month commitment. Any explicit
+  fixed-term indicator still blocks the audit.
+- **Evidence checklist**: uses unambiguous markers such as
+  `INITIAL_VAT=WITHIN_LIMIT`, `SETUP_DETAILS=PRESENT_TAX_UNVERIFIED`,
+  `MONTHLY_VAT=UNVERIFIED`, `CONTRACT_TERMS=UNVERIFIED`, and
+  `FINAL_DECISION=BLOCKED`.
+
+No descriptions, personal identifiers, contract text, URLs, or tokens from
+checkout detail lines are included in the audit email. Malformed or missing
+details cause an **unverified** status, not a zero-fee assumption. The 2-server
+quota and original purchase blockers are unchanged. Existing commercial
+emails are **not resent** just because code was updated: a new stock event
+or an explicitly invoked manual audit is required.
+
+Update and test on Ubuntu:
+
+```bash
+sudo git -C /opt/ovh-ksle-monitor pull --ff-only
+cd /opt/ovh-ksle-monitor
+python3 -m unittest discover -s tests -q
+python3 ksle_monitor.py --simulate-restock-flow
+```
+
+If the public availability API still reports no suitable KS-LE-6 server,
+`--commercial-audit` will correctly return `WAITING` without creating a
+temporary cart: **no real prices or legal commitment terms can be confirmed
+until a suitable offer is actually available to quote**. The commercial
+watcher will use the richer evidence report automatically on the next
+eligible stock edge. This phase deliberately does not enable order creation,
+payment, or any fixed-term purchase.
+
 ## Troubleshooting
 
 | Symptom | Check |

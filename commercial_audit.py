@@ -27,6 +27,7 @@ from purchase_guard import (
     checkout_total_eur, choose_candidate, make_api_client, parse_eur,
 )
 from purchase_quota import DEFAULT_PATH, OPEN_STATES, PurchaseQuota
+from quote_breakdown import inspect_checkout_details
 from renewal_pricing import inspect_cart_renewals
 
 
@@ -147,6 +148,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
 
     def check_quote(quote: Any) -> None:
         results["initial"] = validate_initial_price(quote, policy.max_total_eur)
+        results["breakdown"] = inspect_checkout_details(quote)
         results["contracts"] = describe_cart_contracts(quote)
         try:
             results["zero_commitment"] = inspect_commitment(quote)
@@ -209,6 +211,26 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         if results.get("zero_commitment") else
         "No explicit zero-commitment proof; legal terms NOT VERIFIED. "
     )
+    monthly_consistent = (
+        renewal.amount_eur is not None and gross_renewal is not None
+        and gross_renewal >= renewal.amount_eur
+    )
+    monthly_gate = (
+        "ABOVE_LIMIT" if monthly_consistent and gross_renewal > policy.max_monthly_eur else
+        "INDICATIVE_WITHIN_LIMIT_NOT_FINAL" if monthly_consistent else
+        "UNVERIFIED"
+    )
+    breakdown = results["breakdown"]
+    evidence_matrix = (
+        "EVIDENCE CHECKLIST (NO PURCHASE): "
+        f"INITIAL_VAT=WITHIN_LIMIT({initial.with_tax:.2f}/{policy.max_total_eur:.2f}); "
+        f"SETUP_DETAILS={'PRESENT_TAX_UNVERIFIED' if breakdown.status == 'LINES_PRESENT' else 'UNVERIFIED'}; "
+        f"MONTHLY_VAT={monthly_gate}; "
+        f"ZERO_COMMITMENT={'INDICATIVE_ONLY' if results.get('zero_commitment') else 'UNVERIFIED'}; "
+        f"CONTRACT_TERMS=UNVERIFIED; PAYMENT_FOR_THIS_ORDER=UNVERIFIED; "
+        f"ACCOUNT_COUNT=READ_ONLY_SNAPSHOT({remote.upper_bound}/{policy.max_servers}); "
+        "FINAL_DECISION=BLOCKED. "
+    )
     auto_buy_status = assess_auto_buy(policy, candidate, PurchaseEvidence(
         initial_including_vat=initial.with_tax,
         initial_quote_verified=True,
@@ -229,10 +251,11 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         f"= {initial.with_tax:.2f} EUR incl. VAT "
         f"(cap {policy.max_total_eur:.2f} EUR, all cart charges included). "
         "Separate installation fee NOT itemized/verified. "
-        + monthly + renewal.summary() + " " + commitment
+        + breakdown.summary() + monthly + renewal.summary() + " " + commitment
         + results["contracts"] + " " + payment.summary() + " "
         + f"Remote service + open order count {remote.upper_bound}/"
         f"{policy.max_servers}. Checkout/payment remain DISABLED. "
+        + evidence_matrix
         + auto_buy_status
     )
 

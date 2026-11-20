@@ -46,6 +46,10 @@ def _fake_cart(_client, *, quote_validator, renewal_observer, **_kwargs):
             "tax": {"currencyCode": "EUR", "value": "9.20"},
             "withTax": {"currencyCode": "EUR", "value": "49.20"},
         },
+        "details": [
+            {"detailType": "DURATION", "totalPrice": {"currencyCode": "EUR", "value": "35.00"}},
+            {"detailType": "INSTALLATION", "totalPrice": {"currencyCode": "EUR", "value": "5.00"}},
+        ],
         "commitmentDuration": "P0M",  # Fake only, not contract proof.
     })
     renewal_observer(({
@@ -90,6 +94,8 @@ def simulate_restock_flow() -> list[str]:
 
         def fake_notify(candidate: monitor.Stock, report: str) -> None:
             assert "AUTO-BUY BLOCKED" in report
+            assert "INITIAL CART DETAIL LINES" in report
+            assert "EVIDENCE CHECKLIST (NO PURCHASE)" in report
             assert "Checkout/payment remain DISABLED" in report
             fake_messages.append(("commercial", candidate.key))
 
