@@ -39,6 +39,10 @@ SAFE_ROUTES = {
         # name or commercial range, is used for the two-KS-LE-6 cap.
         re.compile(r"^/service$"),
         re.compile(r"^/service/[0-9]+$"),
+        # Exact read-only hardware inspection for existing dedicated servers.
+        # Required when OVH /service/{id} omits plan.code; do not enable any
+        # server mutations or wider /dedicated/server/* access.
+        re.compile(r"^/dedicated/server/[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/specifications/hardware$"),
         # Phase C: account read-only verification; no payment/order mutation.
         re.compile(r"^/me/payment/method$"),
         re.compile(r"^/me/payment/method/[0-9]+$"),
