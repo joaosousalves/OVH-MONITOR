@@ -289,6 +289,9 @@ class MonitorTests(unittest.TestCase):
         html = monitor.alert_html(stocks, prices=prices)
         self.assertIn("42.00 EUR/mês sem IVA", plain)
         self.assertIn("42.00 EUR/mês sem IVA", html)
+        self.assertIn("51.66 EUR/mês com IVA de 23%", plain)
+        self.assertIn("51.66 EUR/mês com IVA de 23%", html)
+        self.assertIn("NÃO é cotação final", plain)
         self.assertIn("Preço indisponível", html)
         self.assertIn("Preço de catálogo indisponível", plain)
 

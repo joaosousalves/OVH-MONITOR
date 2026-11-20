@@ -48,9 +48,12 @@ OVH_AUTO_BUY_MAX_SERVERS=2
 OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 # Ordered disk preferences are currently defined in purchase_guard.py:
 # 1. 2x512GB NVMe + 2x4TB HDD (original preference)
-# 2. 2x1.92TB NVMe
+# 2. 4x960GB SATA SSD
 # 3. 3x1TB NVMe
-# 4. 4x960GB SATA SSD
+# 4. 2x1.92TB NVMe
+# Catalog --list-prices and stock email show a 23% PT mainland IVA estimate.
+# This VAT calculation is illustrative only, never a final OVH quote or
+# a verified month-to-month commitment-free subscription price.
 # OVH_AUTO_BUY_ALLOWED_DATACENTERS must contain only:
 # bhs (Canada), fra (Germany), gra/rbx/sbg (France), lon (UK), waw (Poland).
 # All four exact 128GB disk layouts are owner-approved as future preferences.

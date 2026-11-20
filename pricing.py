@@ -6,11 +6,12 @@ checkout totals. Uses only Python standard library.
 """
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from urllib.request import Request, urlopen
@@ -21,6 +22,40 @@ TTL_SECONDS = 6 * 3600
 RETRY_SECONDS = 3600  # Avoid hammering catalog on failure.
 CACHE_SCHEMA_VERSION = 2  # Invalidate pre-fix cache entries with zero parsed prices.
 LOG = logging.getLogger("ksle-monitor")
+PT_MAINLAND_VAT_RATE = Decimal("0.23")
+_CATALOG_EUR = re.compile(
+    r"^(0|[1-9][0-9]{0,5})\.([0-9]{2}) EUR/mês sem IVA \(estimativa de catálogo\)$"
+)
+
+
+def indicative_pt_vat_gross(description: str) -> Decimal | None:
+    """Apply the owner's 23% PT mainland assumption to a PUBLIC estimate.
+
+    Never use the result as a purchase authorization or a verified renewal
+    amount. Unknown, malformed or non-catalog prices must remain unverified.
+    """
+    if not isinstance(description, str):
+        return None
+    match = _CATALOG_EUR.fullmatch(description)
+    if not match:
+        return None
+    net = Decimal(f"{match.group(1)}.{match.group(2)}")
+    if net <= 0:
+        return None
+    return (net * (Decimal("1.00") + PT_MAINLAND_VAT_RATE)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP,
+    )
+
+
+def annotate_pt_vat_estimate(description: str) -> str:
+    """Add a prominently qualified VAT estimate; keep original cache intact."""
+    gross = indicative_pt_vat_gross(description)
+    if gross is None:
+        return description
+    return (
+        f"{description} | {gross:.2f} EUR/mês com IVA de 23% "
+        "(simulação fiscal; NÃO é cotação final nem prova de sem compromisso)"
+    )
 
 
 def monthly_price(item: dict) -> Decimal | None:

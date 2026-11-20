@@ -383,6 +383,7 @@ def send_mail(config: MailConfig, subject: str, body: str, html_body: str | None
 
 
 def alert_content(stocks: list[Stock], prices: dict[str, str] | None = None) -> tuple[str, str]:
+    from pricing import annotate_pt_vat_estimate
     preferred_count = sum(stock.preferred for stock in stocks)
     marker = " - preferred disks!" if preferred_count else ""
     subject = f"[OVH STOCK] KS-LE-6: {len(stocks)} new availability event(s){marker}"
@@ -395,7 +396,7 @@ def alert_content(stocks: list[Stock], prices: dict[str, str] | None = None) -> 
             f"{'[PREFERRED] ' if stock.preferred else ''}{stock.storage_label}",
             f"  Datacenter: {stock.datacenter.upper()}",
             f"  API availability: {stock.status}",
-            f"  Preço: {(prices or {}).get(stock.storage, 'Preço de catálogo indisponível; confirmar no checkout')}",
+            f"  Preço: {annotate_pt_vat_estimate((prices or {}).get(stock.storage, 'Preço de catálogo indisponível; confirmar no checkout'))}",
             "",
         ])
     lines.extend([
@@ -412,6 +413,7 @@ def alert_content(stocks: list[Stock], prices: dict[str, str] | None = None) -> 
 def alert_html(stocks: list[Stock], *, test: bool = False, prices: dict[str, str] | None = None) -> str:
     """Mobile-friendly table-based HTML email, escaped for untrusted API values."""
     from html import escape
+    from pricing import annotate_pt_vat_estimate
 
     sorted_stocks = sorted(stocks, key=stock_sort_key)
     cards = []
@@ -420,7 +422,9 @@ def alert_html(stocks: list[Stock], *, test: bool = False, prices: dict[str, str
         dc = escape(stock.datacenter.upper())
         status = escape(stock.status)
         preferred = stock.preferred
-        price = escape((prices or {}).get(stock.storage, "Preço indisponível — confirmar no checkout"))
+        price = escape(annotate_pt_vat_estimate(
+            (prices or {}).get(stock.storage, "Preço indisponível — confirmar no checkout")
+        ))
         accent = "#16a34a" if preferred else "#64748b"
         badge = (
             '<span style="color:#166534;background:#dcfce7;padding:5px 9px;'
@@ -656,7 +660,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(diagnostic_summary(fetch_catalog()), indent=2))
             return 0
         if args.list_prices:
-            from pricing import cached_prices
+            from pricing import annotate_pt_vat_estimate, cached_prices
             prices = cached_prices(state_path().with_name("pricing-cache.json"))
             if prices:
                 for storage, value in sorted(
@@ -667,7 +671,7 @@ def main(argv: list[str] | None = None) -> int:
                         pair[0],
                     ),
                 ):
-                    print(f"{STORAGE_NAMES.get(storage, storage)}: {value}")
+                    print(f"{STORAGE_NAMES.get(storage, storage)}: {annotate_pt_vat_estimate(value)}")
             else:
                 print("Sem preços de catálogo verificados; consultar o checkout OVHcloud.")
             return 0

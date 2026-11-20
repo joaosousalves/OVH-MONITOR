@@ -35,6 +35,36 @@ def fixture():
     }
 
 class PriceTests(unittest.TestCase):
+    def test_portugal_vat_estimates_for_all_four_real_catalog_samples(self):
+        examples = {
+            "26.99": "33.20",
+            "27.99": "34.43",
+            "28.99": "35.66",
+            "29.99": "36.89",
+        }
+        for net, expected in examples.items():
+            with self.subTest(net=net):
+                raw = f"{net} EUR/mês sem IVA (estimativa de catálogo)"
+                self.assertEqual(str(pricing.indicative_pt_vat_gross(raw)), expected)
+                shown = pricing.annotate_pt_vat_estimate(raw)
+                self.assertIn(f"{expected} EUR/mês com IVA de 23%", shown)
+                self.assertIn("NÃO é cotação final", shown)
+
+    def test_vat_rounding_and_unverified_catalog_values(self):
+        raw = "0.50 EUR/mês sem IVA (estimativa de catálogo)"
+        self.assertEqual(str(pricing.indicative_pt_vat_gross(raw)), "0.62")
+        bad = (
+            "0.00 EUR/mês sem IVA (estimativa de catálogo)",
+            "29.99 USD/mês sem IVA (estimativa de catálogo)",
+            "29.99 EUR/mês com IVA",
+            "29.990 EUR/mês sem IVA (estimativa de catálogo)",
+            "29.99 EUR/mês sem IVA (estimativa de catálogo); contrato 24M",
+        )
+        for value in bad:
+            with self.subTest(value=value):
+                self.assertIsNone(pricing.indicative_pt_vat_gross(value))
+                self.assertEqual(pricing.annotate_pt_vat_estimate(value), value)
+
     def test_complete_price_without_tax(self):
         prices = pricing.extract_prices(fixture())
         self.assertEqual(prices["hybridsoftraid-2x4000sa-2x500nvme"],

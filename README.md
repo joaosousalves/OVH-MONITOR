@@ -80,7 +80,7 @@ This requests a fresh public Eco catalog and prints a restricted, non-secret sum
 
 On a **new stock alert only**, the monitor consults the publicly available OVHcloud Eco catalog for subsidiary `PT`, and caches monthly pricing for **6 hours** in `/var/lib/ovh-ksle-monitor/pricing-cache.json`. For each storage option the monitor tries to calculate the monthly plan **plus all mandatory default addons** using the current Eco catalog recurring monthly pricing (`phase=1`, `interval=1`; older schemas may expose `P1M`). The stock endpoint itself does not return prices. No API token or cart operation is needed for the public catalog.
 
-Prices, when available and unambiguous, are labeled **"EUR/mês sem IVA (estimativa de catálogo)"** in both HTML and plain-text emails. **They are not checkout quotes** and can omit location-specific fees, setup fees, promotional adjustments or taxes. If any required price is missing, ambiguous or the catalog cannot be reached, the email says **"Preço indisponível — confirmar no checkout"**. Price lookup failure does not stop stock alerts; failed queries are not retried more than once per hour. Existing alert history and stock backoff are preserved. No changes to `/etc/ovh-ksle-monitor.env` are required.
+Prices, when available and unambiguous, are labeled **"EUR/mês sem IVA (estimativa de catálogo)"** in both HTML and plain-text emails. The monitor also appends an **illustrative 23% Portuguese mainland IVA calculation**; neither is a checkout quote. They can omit location-specific fees, setup fees, promotional adjustments or tax rules specific to the account. If any required price is missing, ambiguous or the catalog cannot be reached, the email says **"Preço indisponível — confirmar no checkout"**. Price lookup failure does not stop stock alerts; failed queries are not retried more than once per hour. Existing alert history and stock backoff are preserved. No changes to `/etc/ovh-ksle-monitor.env` are required.
 
 To inspect available catalog prices **without sending email**, run `python3 ksle_monitor.py --list-prices` from the project directory. This fetches the public catalog only if the cache is due.
 
@@ -1236,6 +1236,47 @@ until a suitable offer is actually available to quote**. The commercial
 watcher will use the richer evidence report automatically on the next
 eligible stock edge. This phase deliberately does not enable order creation,
 payment, or any fixed-term purchase.
+
+## Phase P — Portugal 23% VAT estimates (catalog only; purchase still blocked)
+
+The owner confirmed **23% mainland Portuguese VAT** as the assumption to
+show alongside the public OVHcloud Eco catalog's monthly prices. `--list-prices`
+and **future stock-alert emails** now show the original ex-VAT catalog value
+plus a VAT-inclusive **estimate**, rounded to EUR cents using decimal
+half-up rounding. The current approved four-layout snapshot is:
+
+| Preference | Storage | Catalog without VAT | 23% VAT estimate | Margin under 37 EUR |
+| --- | --- | ---: | ---: | ---: |
+| 1 | 2 × 512 GB NVMe + 2 × 4 TB HDD | 26.99 EUR | 33.20 EUR | 3.80 EUR |
+| 2 | 4 × 960 GB SATA SSD | 27.99 EUR | 34.43 EUR | 2.57 EUR |
+| 3 | 3 × 1 TB NVMe | 28.99 EUR | 35.66 EUR | 1.34 EUR |
+| 4 | 2 × 1.92 TB NVMe | 29.99 EUR | 36.89 EUR | 0.11 EUR |
+
+The figures above were supplied by the operator's catalog output on
+20 November 2026 and **can change**. The CLI always uses its current
+validated local cache, refreshing on the existing 6-hour schedule.
+Malformed, missing or non-EUR strings are never converted to a VAT estimate.
+No additional OVH credentials, permissions, systemd timers, or configuration
+files are needed. Keep in mind that the applicable VAT treatment still has to
+match the final invoice for this exact account; 23% here is a **display
+assumption**, not a claim from the OVH checkout.
+
+These estimates do **not** prove the actual monthly renewal price, fixed-term
+contract conditions, first charge including any installation fees, or
+availability. The approved caps remain **37 EUR/month including VAT** and
+**80 EUR initial including VAT per server**, with **zero fixed commitment**.
+`OVH_AUTO_BUY_ENABLED=false`; order/payment endpoints remain unavailable.
+The final commercial audit requires a live eligible offer and a temporary
+OVH cart quote; unknown legal/payment conditions continue to block purchase.
+
+Update and test:
+
+```bash
+sudo git -C /opt/ovh-ksle-monitor pull --ff-only
+cd /opt/ovh-ksle-monitor
+python3 -m unittest discover -s tests -q
+python3 ksle_monitor.py --list-prices
+```
 
 ## Troubleshooting
 
