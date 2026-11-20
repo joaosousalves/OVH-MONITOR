@@ -28,6 +28,8 @@ OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 # Phase F read-only plan-code inventory (separate CLI, manual invocation):
 # GET /service
 # GET /service/*
+# GET /dedicated/server/*/specifications/hardware
+# (read-only fallback when /service/{id} omits plan.code)
 # Do NOT grant POST /order/cart/*/checkout or POST /me/order/*/pay yet.
 # The --simulate-checkout command is fully offline and does not need a key.
 # Phase C does NOT implement live checkout or automated email.

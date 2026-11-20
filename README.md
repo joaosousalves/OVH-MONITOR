@@ -738,20 +738,37 @@ still be independently reviewed before any future purchase implementation.
 
 - `GET /service` (list service IDs)
 - `GET /service/{serviceId}` (read each service's exact `plan.code`)
+- `GET /dedicated/server/{serviceName}/specifications/hardware` (**only** when
+  a dedicated server's `plan.code` is null or blank)
 
-The code compares plan codes to `27skle06-v1` / `27skle06`, counting
-the service quantity conservatively, **including expired records** to
-avoid accidentally exceeding the owner's lifetime limit of two servers.
-Unknown/incomplete responses, ambiguous KS-LE-6 variants or more than
-250 service IDs produce an error, **not a false zero**. It never logs
-account service identifiers. The inventory excludes purchase orders
-that have not yet become services; the local purchase journal still
-protects against duplicate attempts, and additional order reconciliation
-is required for future live checkout.
+The code first compares known plan codes to `27skle06-v1` / `27skle06`.
+OVHcloud has also been observed returning a missing `plan.code` for every
+service in an account. In that case, the tool excludes clearly unrelated
+service routes (IP, domain, VPS, etc.) and **reads the official commercial
+model** of each dedicated server. It recognizes a `KS-LE-6` model prefix,
+while other models such as `KS-6` and `KS-LE-5` do not consume KS-LE-6
+quota. This model-name fallback is not proof of an exact catalog plan code.
 
-For a new or rotated AK/AS/CK API key, add only these two **GET**
-permissions to the existing strictly scoped key. Old keys may return
-`HTTP 403` until these permissions are granted. Do **not** add any
+The service quantity is counted conservatively, **including expired
+records**, to avoid exceeding the owner's lifetime limit of two servers.
+Missing/inconsistent dedicated-server details, unrecognized routing,
+ambiguous KS-LE-6 spellings or over 250 service IDs produce an error,
+**not a false zero**. The summary reports how many dedicated hardware
+lookups were performed and never includes service hostnames or identifiers.
+The inventory excludes purchase orders that have not yet become services;
+the local purchase journal still protects against duplicate attempts, and
+additional order reconciliation is required for future live checkout.
+
+For a new or rotated AK/AS/CK API key, retain the previous cart and
+account permissions and grant these **GET** rights as well:
+
+```text
+GET /service
+GET /service/*
+GET /dedicated/server/*/specifications/hardware
+```
+
+Old keys may return `HTTP 403` until these are granted. Do **not** add
 checkout, payment, PUT or DELETE service permissions.
 
 To run an account-only inventory **even when there is no stock**, use
