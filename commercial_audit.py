@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from account_reconciliation import AccountReconciliationError
+from auto_buy_guard import PurchaseEvidence, assess_auto_buy
 from commitment_guard import CommitmentSafetyError, inspect_commitment
 from ksle_monitor import APITransientError, MonitorError, Stock, retrieve_stock
 from order_probe import OVHCartClient, OrderProbeError, test_order, verify_available_test_fqn
@@ -199,6 +200,19 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         if results.get("zero_commitment") else
         "No explicit zero-commitment proof; legal terms NOT VERIFIED. "
     )
+    auto_buy_status = assess_auto_buy(policy, candidate, PurchaseEvidence(
+        initial_including_vat=initial.with_tax,
+        initial_quote_verified=True,
+        monthly_including_vat=gross_renewal,
+        # A cart RENEW label is evidence, not proof of the final VAT-inclusive
+        # renewal invoice or legal commitment-free contract terms.
+        monthly_renewal_verified=False,
+        no_fixed_commitment_verified=False,
+        payment_method_ready=False,
+        remote_slots_used=remote.upper_bound,
+        remote_inventory_verified=not remote.overlap_unverified,
+        local_purchase_history_clear=True,
+    )).summary()
     return (
         "COMMERCIAL AUDIT PARTIAL (NO PURCHASE): "
         f"{candidate.fqn} at {candidate.datacenter.upper()}; "
@@ -208,7 +222,8 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         "Separate installation fee NOT itemized/verified. "
         + monthly + renewal.summary() + " " + commitment
         + f"Remote service + open order count {remote.upper_bound}/"
-        f"{policy.max_servers}. Checkout/payment remain DISABLED."
+        f"{policy.max_servers}. Checkout/payment remain DISABLED. "
+        + auto_buy_status
     )
 
 
