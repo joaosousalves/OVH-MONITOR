@@ -19,6 +19,9 @@ from purchase_guard import (
     choose_candidate, make_api_client, preview,
 )
 from purchase_quota import DEFAULT_PATH, PurchaseQuota
+from account_reconciliation import (
+    AccountInventory, AccountReconciliationError, reconcile_account,
+)
 
 
 LOG = logging.getLogger("ksle-purchase-preflight")
@@ -27,7 +30,8 @@ LOG = logging.getLogger("ksle-purchase-preflight")
 def preflight(policy: PurchasePolicy, *, stocks: list[Stock],
               client: OVHCartClient | None, journal: OrderJournal,
               quota: PurchaseQuota,
-              payment_check: Callable[[OVHCartClient], str] = payment_readiness) -> str:
+              payment_check: Callable[[OVHCartClient], str] = payment_readiness,
+              account_check: Callable[[OVHCartClient, int], AccountInventory] = reconcile_account) -> str:
     """Return an explanatory preview, without reserving or placing orders.
 
     All stock, legacy-ledger, duplicate-attempt, FQN and price checks are
@@ -45,6 +49,12 @@ def preflight(policy: PurchasePolicy, *, stocks: list[Stock],
     choice = choose_candidate(stocks, policy)
     if choice is None or client is None:
         raise PurchaseSafetyError("Preflight cannot verify an eligible cart")
+    account = account_check(client, policy.max_servers)
+    if account.at_limit:
+        return (
+            f"LIMIT REACHED: {account.matching_services}/{policy.max_servers} "
+            "KS-LE-6 services listed in account. Payment not checked; no order submitted."
+        )
     payment_report = payment_check(client)
     # Re-read the local quota because an external process may have reserved
     # a slot while a temporary cart was being quoted. Still no reservation.
@@ -66,8 +76,9 @@ def preflight(policy: PurchasePolicy, *, stocks: list[Stock],
     return (
         f"PREFLIGHT PARTIAL (NO PURCHASE; MONTHLY PRICE UNVERIFIED): {quote_report} "
         f"Payment check: {payment_report} "
+        f"Account inventory: {account.summary()} "
         f"{remaining}/{policy.max_servers} local reservation slots remain. "
-        f"{disk_approval} The account-wide order count, recurring monthly "
+        f"{disk_approval} Pending account orders, recurring monthly "
         "cost and payment success are NOT verified. "
         "An initial-charge quote does not establish a monthly renewal price; "
         "live checkout remains BLOCKED until verified against the monthly cap."
@@ -90,7 +101,8 @@ def run_purchase_preflight() -> int:
         print(preflight(policy, stocks=stocks, client=client,
                         journal=journal, quota=quota))
         return 0
-    except (PurchaseSafetyError, PaymentReadinessError, OrderProbeError,
+    except (PurchaseSafetyError, AccountReconciliationError,
+            PaymentReadinessError, OrderProbeError,
             MonitorError, APITransientError) as exc:
         LOG.error("Purchase preflight blocked (no order submitted): %s", exc)
         return 1

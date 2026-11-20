@@ -16,6 +16,7 @@ import purchase_preflight as pf
 from order_probe import OrderProbeError, OVHCartClient
 from payment_readiness import PaymentReadinessError
 from purchase_quota import PurchaseQuota
+from account_reconciliation import AccountInventory, AccountReconciliationError
 
 
 def policy() -> guard.PurchasePolicy:
@@ -44,6 +45,10 @@ def quote_with_total(value: str):
     return mock_cart
 
 
+def safe_account(_client, limit: int) -> AccountInventory:
+    return AccountInventory(matching_services=0, inspected_services=1, max_servers=limit)
+
+
 class PurchasePreflightTests(unittest.TestCase):
     def paths(self, root: str):
         return (
@@ -55,16 +60,18 @@ class PurchasePreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             journal, quota = self.paths(root)
             payment = Mock()
+            account = Mock()
             with patch.object(guard, "test_order") as cart:
                 result = pf.preflight(
                     policy(), stocks=[stock(status="unavailable")],
                     client=None, journal=journal, quota=quota,
-                    payment_check=payment,
+                    payment_check=payment, account_check=account,
                 )
             self.assertIn("WAITING", result)
             self.assertIn("no order submitted", result)
             cart.assert_not_called()
             payment.assert_not_called()
+            account.assert_not_called()
             self.assertEqual(quota.read(), [])
 
     def test_valid_quote_and_payment_creates_no_order_or_reservation(self):
@@ -76,7 +83,7 @@ class PurchasePreflightTests(unittest.TestCase):
                     result = pf.preflight(
                         policy(), stocks=[stock()], client=object(),
                         journal=journal, quota=quota,
-                        payment_check=payment,
+                        payment_check=payment, account_check=safe_account,
                     )
             cart.assert_called_once()
             payment.assert_called_once()
@@ -98,6 +105,7 @@ class PurchasePreflightTests(unittest.TestCase):
                         policy(), stocks=[stock(storage_index=1)], client=object(),
                         journal=journal, quota=quota,
                         payment_check=lambda _client: "READ-ONLY: valid",
+                        account_check=safe_account,
                     )
             self.assertIn("already on the future checkout approval list", result)
             self.assertIn("live checkout remains BLOCKED", result)
@@ -118,6 +126,36 @@ class PurchasePreflightTests(unittest.TestCase):
             payment.assert_not_called()
             self.assertEqual(quota.read(), [])
 
+    def test_remote_account_at_limit_stops_before_payment(self):
+        with tempfile.TemporaryDirectory() as root:
+            journal, quota = self.paths(root)
+            payment = Mock()
+            with patch.object(guard, "verify_available_test_fqn"):
+                with patch.object(guard, "test_order", side_effect=quote_with_total("39.99")):
+                    result = pf.preflight(
+                        policy(), stocks=[stock()], client=object(),
+                        journal=journal, quota=quota, payment_check=payment,
+                        account_check=lambda _client, limit: AccountInventory(2, 10, limit),
+                    )
+            self.assertIn("LIMIT REACHED: 2/2", result)
+            payment.assert_not_called()
+            self.assertEqual(quota.read(), [])
+
+    def test_incomplete_remote_inventory_stops_before_payment(self):
+        with tempfile.TemporaryDirectory() as root:
+            journal, quota = self.paths(root)
+            payment = Mock()
+            with patch.object(guard, "verify_available_test_fqn"):
+                with patch.object(guard, "test_order", side_effect=quote_with_total("39.99")):
+                    with self.assertRaisesRegex(AccountReconciliationError, "inconclusive"):
+                        pf.preflight(
+                            policy(), stocks=[stock()], client=object(),
+                            journal=journal, quota=quota, payment_check=payment,
+                            account_check=Mock(side_effect=AccountReconciliationError("inconclusive")),
+                        )
+            payment.assert_not_called()
+            self.assertEqual(quota.read(), [])
+
     def test_payment_not_ready_blocks_without_reservation(self):
         with tempfile.TemporaryDirectory() as root:
             journal, quota = self.paths(root)
@@ -128,6 +166,7 @@ class PurchasePreflightTests(unittest.TestCase):
                             policy(), stocks=[stock()], client=object(),
                             journal=journal, quota=quota,
                             payment_check=Mock(side_effect=PaymentReadinessError("No valid card")),
+                            account_check=safe_account,
                         )
             self.assertEqual(quota.read(), [])
 
@@ -162,7 +201,8 @@ class PurchasePreflightTests(unittest.TestCase):
                     result = pf.preflight(
                         policy(), stocks=[stock()], client=object(),
                         journal=journal, quota=quota,
-                        payment_check=lambda _client: "READ-ONLY: valid")
+                        payment_check=lambda _client: "READ-ONLY: valid",
+                        account_check=safe_account)
             self.assertIn("1/2 local reservation slots remain", result)
             self.assertEqual(len(quota.read()), 1)
 

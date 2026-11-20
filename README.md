@@ -722,6 +722,62 @@ contract/payment review, reconciliation against orders already in the
 account, and separate authorization to activate checkout.
 **No live order will be made by this release.**
 
+## Phase F — no fixed commitment + account service inventory (GET only)
+
+**Owner's firm purchase requirement:** **KS-LE-6, 128 GB RAM, P1M
+month-to-month WITHOUT a 12- or 24-month commitment.** This is separate
+from paying one month at a time. The cart code already selects ONLY the
+`P1M/default` offer, never `P12M` or `P24M`. Phase F also rejects
+machine-readable positive commitment/engagement indicators in the offer,
+added item or GET checkout quote. Unknown metadata does not count as
+proof of zero commitment. Checkout remains disabled even if a zero-term
+indicator is present; OVHcloud's complete contractual conditions must
+still be independently reviewed before any future purchase implementation.
+
+**Manual inventory of the authenticated OVHcloud account** uses ONLY:
+
+- `GET /service` (list service IDs)
+- `GET /service/{serviceId}` (read each service's exact `plan.code`)
+
+The code compares plan codes to `27skle06-v1` / `27skle06`, counting
+the service quantity conservatively, **including expired records** to
+avoid accidentally exceeding the owner's lifetime limit of two servers.
+Unknown/incomplete responses, ambiguous KS-LE-6 variants or more than
+250 service IDs produce an error, **not a false zero**. It never logs
+account service identifiers. The inventory excludes purchase orders
+that have not yet become services; the local purchase journal still
+protects against duplicate attempts, and additional order reconciliation
+is required for future live checkout.
+
+For a new or rotated AK/AS/CK API key, add only these two **GET**
+permissions to the existing strictly scoped key. Old keys may return
+`HTTP 403` until these permissions are granted. Do **not** add any
+checkout, payment, PUT or DELETE service permissions.
+
+To run an account-only inventory **even when there is no stock**, use
+the existing root-only `/etc/ovh-ksle-order.env`:
+
+```bash
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ksle-account-reconcile \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --reconcile-account
+```
+
+This does not create a cart, send email, query payment methods, or
+modify persistent purchase records. If stock becomes available during
+manual `--purchase-preflight`, it checks the remote service count
+**after** the validated temporary quote and **before** any payment-method
+read. A verified account count of two or more blocks further work.
+An incomplete account scan also blocks preflight. The existing 30-second
+stock-alert timer is unchanged and needs no additional credentials.
+
+**Still not solved:** pending order IDs not yet provisioned, contractual
+proof of zero minimum engagement when the API omits that metadata, and
+the independently verified monthly renewal total with VAT. Therefore
+all real purchase or payment operations remain impossible.
+
 ## Troubleshooting
 
 | Symptom | Check |

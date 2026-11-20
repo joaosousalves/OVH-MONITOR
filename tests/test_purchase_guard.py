@@ -272,6 +272,19 @@ class PurchaseGuardTests(unittest.TestCase):
             self.assertIn("VAT status, discounts, and final monthly renewal NOT VERIFIED", result)
             self.assertIsNone(journal.read())
 
+    def test_explicit_twelve_month_commitment_blocks_price_preview(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = guard.OrderJournal(Path(directory) / "intent.json")
+            def quote_with_commitment(*args, **kwargs):
+                quote = checkout("33.20")
+                quote["contracts"] = [{"commitmentDuration": "P12M"}]
+                kwargs["quote_validator"](quote)
+            with patch.object(guard, "verify_available_test_fqn"):
+                with patch.object(guard, "test_order", side_effect=quote_with_commitment):
+                    with self.assertRaisesRegex(guard.PurchaseSafetyError, "Fixed-term"):
+                        guard.preview(policy(), stocks=[stock()], client=object(), journal=journal)
+            self.assertIsNone(journal.read())
+
     def test_journal_reservation_persistent_and_one_time(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "intent.json"

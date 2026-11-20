@@ -127,6 +127,20 @@ class OrderProbeTests(unittest.TestCase):
             probe.test_order(fake, renewal_observer=fail)
         self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
 
+    def test_cart_checkout_contract_with_twelve_month_term_fails_closed(self):
+        class LongCommitment(FakeClient):
+            def request(self, method, path, payload=None, query=None):
+                result = super().request(method, path, payload, query)
+                if method == "GET" and path.endswith("/checkout"):
+                    result["contracts"] = [{"commitmentDuration": "P12M"}]
+                return result
+        fake = LongCommitment()
+        with self.assertRaisesRegex(probe.OrderProbeError, "Fixed-term"):
+            probe.test_order(fake)
+        self.assertEqual(fake.calls[-1][0:2], ("DELETE", "/order/cart/cart-123"))
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in fake.calls))
+
     def test_order_rejection_still_cleans_up_cart(self):
         fake = FakeClient(fail_path="/order/cart/cart-123/eco/options")
         with self.assertRaises(probe.OrderProbeError):

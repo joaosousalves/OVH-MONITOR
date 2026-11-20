@@ -18,6 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from commitment_guard import CommitmentSafetyError, inspect_commitment
+
 
 BASE_URL = "https://api.eu.ovhcloud.com/v1"
 TIME_URL = "https://api.eu.ovhcloud.com/1.0/auth/time"
@@ -33,6 +35,10 @@ SAFE_ROUTES = {
         re.compile(r"^/order/catalog/public/eco$"),
         re.compile(r"^/order/cart/[A-Za-z0-9-]+/eco$"),
         re.compile(r"^/order/cart/[A-Za-z0-9-]+/checkout$"),
+        # Read-only billing inventory. Exact service plan code, not server
+        # name or commercial range, is used for the two-KS-LE-6 cap.
+        re.compile(r"^/service$"),
+        re.compile(r"^/service/[0-9]+$"),
         # Phase C: account read-only verification; no payment/order mutation.
         re.compile(r"^/me/payment/method$"),
         re.compile(r"^/me/payment/method/[0-9]+$"),
@@ -317,6 +323,10 @@ def find_monthly_offer(offers: Any, plan_code: str = PLAN_CODE) -> dict:
         for price in price_rows:
             if (isinstance(price, dict) and price.get("duration") == "P1M"
                     and price.get("pricingMode") == "default"):
+                try:
+                    inspect_commitment(offer, price)
+                except CommitmentSafetyError as exc:
+                    raise OrderProbeError(str(exc)) from exc
                 matches.append({"planCode": plan_code, "duration": "P1M",
                                 "pricingMode": "default"})
     if len(matches) == 1:
@@ -391,6 +401,12 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
         item_id = order_item.get("itemId") if isinstance(order_item, dict) else None
         if not isinstance(item_id, int) or item_id <= 0:
             raise OrderProbeError("Adding server to cart returned no valid itemId")
+        if "duration" in order_item and order_item["duration"] != "P1M":
+            raise OrderProbeError("Cart item is not on an exact P1M term")
+        try:
+            inspect_commitment(order_item)
+        except CommitmentSafetyError as exc:
+            raise OrderProbeError(str(exc)) from exc
 
         item_responses = [order_item] if renewal_observer is not None else None
         for addon in addons:
@@ -410,6 +426,10 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             })
         quote_data = client.request("GET", cart_path + "/checkout")
         price = extract_quote(quote_data)
+        try:
+            inspect_commitment(quote_data)
+        except CommitmentSafetyError as exc:
+            raise OrderProbeError(str(exc)) from exc
         if quote_validator is not None:
             # A fail-closed price policy can reject an otherwise valid cart.
             # finally still deletes the temporary cart if the policy fails.

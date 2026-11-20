@@ -25,6 +25,9 @@ OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 # GET /me/payment/method
 # GET /me/payment/method/*
 # GET /me/order/*/status  (future read-only reconciliation)
+# Phase F read-only plan-code inventory (separate CLI, manual invocation):
+# GET /service
+# GET /service/*
 # Do NOT grant POST /order/cart/*/checkout or POST /me/order/*/pay yet.
 # The --simulate-checkout command is fully offline and does not need a key.
 # Phase C does NOT implement live checkout or automated email.
@@ -42,5 +45,10 @@ OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 # OVH_AUTO_BUY_ALLOWED_DATACENTERS must contain only:
 # bhs (Canada), fra (Germany), gra/rbx/sbg (France), lon (UK), waw (Poland).
 # All four exact 128GB disk layouts are owner-approved as future preferences.
-# The recurring monthly total remains UNVERIFIED; no paid checkout permitted.
-# Phase E: --purchase-preflight is a MANUAL temporary-cart quote plus\n# GET-only default payment check. It never places an order, reserves a\n# quota slot, or grants checkout/payment scopes.\n# A VAT-inclusive monthly renewal cap has not been approved.\n# No checkout is implemented or enabled by these settings.
+# Recurring monthly total (incl. VAT) remains UNVERIFIED; no paid checkout permitted.
+# Month-to-month P1M without any 12- or 24-month fixed commitment ONLY.
+# Phase E/F --purchase-preflight is a MANUAL temporary-cart quote plus
+# GET-only account service inventory and default payment check.
+# It never places an order or reserves a quota slot.
+# The EUR 37 monthly cap is approved, but the actual renewal charge is not verified.
+# No checkout is implemented or enabled by these settings.
