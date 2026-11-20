@@ -865,6 +865,58 @@ payment rights. This command does not create carts, send emails, write
 purchase journals, or attempt any purchase. The separate purchase preflight
 remains explicitly **partial**, and checkout is still disabled.
 
+## Phase I — commercial audit before considering checkout (no purchase)
+
+Use `--commercial-audit` when an approved KS-LE-6 / 128 GB configuration
+appears in the stock feed. It is a **manual, one-shot** command and is **not**
+attached to the 30-second monitor timer. In order, it:
+
+1. Requires `OVH_AUTO_BUY_ENABLED=false` and the existing 80 EUR initial,
+   37 EUR/month VAT-inclusive ceilings, approved disk configurations and
+   Europe/Canada datacenters from `/etc/ovh-ksle-order.env`.
+2. Checks the private local purchase journals, then scans **existing services
+   and still-open orders** using Phase H (including proven-expired `notPaid`
+   handling). Missing records or unidentified overlaps prevent the cart step.
+3. Reconfirms the exact live stock FQN/datacenter, prepares **one temporary
+   cart** for the highest-priority currently available option, reads the
+   `GET /order/cart/{cartId}/checkout` quotation and deletes the cart.
+4. Requires a complete, matching initial EUR `withoutTax` + `tax` = `withTax`
+   breakdown. The **entire cart's VAT-inclusive initial total**, including
+   whatever setup charges OVHcloud has included, must be **at most 80 EUR**.
+   The separate setup-fee amount is **not** independently certified.
+5. Inspects all `RENEW` component labels and any explicitly VAT-inclusive
+   `priceWithTax` fields. An ordinary `RENEW.price` is **not** enough to
+   verify the 37 EUR/month VAT-inclusive ceiling. Even complete item-level
+   gross labels are not a binding future renewal invoice.
+6. Refuses explicitly nonzero commitment terms, and reports whether a
+   structured zero-commitment indicator was seen. One-month order duration
+   `P1M` by itself **does not prove** freedom from a 12/24-month obligation.
+   Seller contract terms still require independent validation.
+
+The result intentionally says `COMMERCIAL AUDIT PARTIAL` whenever an
+initial quote passes. It must **never be treated as approval to place or pay
+an order**. When the server is out of stock, the command prints `WAITING`
+without calling the account or cart endpoints. The current SMTP stock
+alerts remain unchanged; **no order, payment, reservation or email is sent**
+by this audit.
+
+```bash
+sudo git -C /opt/ovh-ksle-monitor pull --ff-only
+sudo systemd-run --wait --pipe --collect \
+  --unit=ovh-ksle-commercial-audit \
+  -p EnvironmentFile=/etc/ovh-ksle-order.env \
+  /usr/bin/python3 /opt/ovh-ksle-monitor/ksle_monitor.py \
+  --commercial-audit
+```
+
+No additional OVH API permissions are required beyond the temporary cart
+test and Phase H account/order GET permissions already documented. Do not
+grant `POST /order/cart/*/checkout`, `POST /me/order/*/pay`, or
+`POST /me/order/*/payWithRegisteredPaymentMean`. Keep
+`OVH_AUTO_BUY_ENABLED=false`. The temporary cart is not a reservation and
+may become unavailable before a human can act. If the cart's DELETE cleanup
+fails, inspect the warning and remove it manually if necessary.
+
 ## Troubleshooting
 
 | Symptom | Check |

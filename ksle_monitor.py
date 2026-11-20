@@ -543,6 +543,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="Phase B: KS-LE-6 preview with EUR price cap, NO checkout or payment")
     group.add_argument("--purchase-preflight", action="store_true",
                        help="Phase E: manual quote + payment readiness; NEVER submit checkout or pay")
+    group.add_argument("--commercial-audit", action="store_true",
+                       help="Read-only account scan + temporary cart tax/renewal/commitment audit; NO checkout")
     group.add_argument("--reconcile-account", action="store_true",
                        help="GET-only KS-LE-6 service inventory against 2-server limit; no cart/order")
     group.add_argument("--reconcile-pending-orders", action="store_true",
@@ -596,6 +598,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.purchase_preflight:
             from purchase_preflight import run_purchase_preflight
             return run_purchase_preflight()
+        if args.commercial_audit:
+            from commercial_audit import run_commercial_audit
+            return run_commercial_audit()
         if args.list_test_stock:
             from order_probe import TEST_PLANS
             plan_code = TEST_PLANS[args.test_plan]
