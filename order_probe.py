@@ -35,11 +35,16 @@ TEST_PLANS = {
     "ks-le-3": "27skle03-v1",
     # Regular Kimsufi KS-4 (EU/CA); this is NOT KS-LE-4 or an order target.
     "ks-4": "24sk40-v1",
+    # KS-7 diagnostic variants; never eligible for live purchase.
+    "ks-7": "24sk70-v1",
+    "ks-7-alt": "24sk702",
+    "ks-7-legacy": "24sk70",
 }
 # These alternate models are ONLY for manual, stock-gated diagnostics. They
 # must never enter the monitored/purchase product filter or quota.
 EXACT_FQN_TEST_PLANS = {
     TEST_PLANS["ks-le-2"], TEST_PLANS["ks-le-3"], TEST_PLANS["ks-4"],
+    TEST_PLANS["ks-7"], TEST_PLANS["ks-7-alt"], TEST_PLANS["ks-7-legacy"],
 }
 PREFERRED_STORAGE_OPTION = "hybridsoftraid-2x4000sa-2x500nvme-27skle06-v1"
 DATACENTERS = {"bhs", "fra", "gra", "lon", "rbx", "sbg", "waw"}
