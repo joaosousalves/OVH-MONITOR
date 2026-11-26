@@ -26,6 +26,7 @@ from ksle_monitor import (
     retrieve_stock, send_mail, write_cooldown,
 )
 from order_probe import OrderProbeError
+from retained_cart import ensure_no_active_cart, persist_retained
 from pending_orders import PendingOrdersError
 from purchase_guard import (
     DEFAULT_JOURNAL, OrderJournal, PurchasePolicy, PurchaseSafetyError,
@@ -257,6 +258,8 @@ def run_commercial_watch() -> int:
 
         def perform_audit() -> str:
             api = make_api_client()
+            retained_path = watch_path.with_name("retained-cart.json")
+            ensure_no_active_cart(retained_path, api)
             quota = PurchaseQuota(
                 Path(os.getenv("OVH_AUTO_BUY_QUOTA_JOURNAL", DEFAULT_PATH)),
                 max_servers=policy.max_servers,
@@ -264,6 +267,7 @@ def run_commercial_watch() -> int:
             journal = OrderJournal(Path(os.getenv("OVH_AUTO_BUY_JOURNAL", DEFAULT_JOURNAL)))
             return audit_commercial(
                 policy, stocks=stocks, client=api, journal=journal, quota=quota,
+                cart_retainer=lambda **record: persist_retained(retained_path, **record),
             )
 
         def mail_result(candidate: Stock, report: str) -> None:
