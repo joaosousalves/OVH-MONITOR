@@ -45,7 +45,9 @@ OVH_AUTO_BUY_JOURNAL=/var/lib/ovh-ksle-purchase/intent.json
 # GET /order/cart/*/item/*/configuration/*
 # The account does NOT need these for ordinary stock alerts. If denied,
 # the commercial audit reports identity UNVERIFIED; it cannot authorize buy.
-# Do NOT grant POST /order/cart/*/checkout or POST /me/order/*/pay yet.
+# For explicitly enabled live mode only, add POST /order/cart/*/checkout.
+# GET /order/cart/* is required to verify retained cart status.
+# Never grant broad POST /me/order/*/pay; automatic payment is requested in checkout.
 # The --simulate-checkout command is fully offline and does not need a key.
 # The --simulate-safe-purchase command rehearses two orders with fake proof,
 # strict owner-confirmed reference prices and a disposable ledger. It also
@@ -77,4 +79,10 @@ OVH_AUTO_BUY_QUOTA_JOURNAL=/var/lib/ovh-ksle-purchase/purchases-v2.json
 # GET-only account service inventory and default payment check.
 # It never places an order or reserves a quota slot.
 # The EUR 37 monthly cap is approved, but the actual renewal charge is not verified.
-# No checkout is implemented or enabled by these settings.
+# The legacy switch above MUST stay false; it protects all diagnostic modes.
+# Separate live checkout mode (off by default). Before enabling, review live
+# contract-review.json and set the exact SHA256 only after checking no fixed commitment.
+OVH_LIVE_CHECKOUT_ENABLED=false
+OVH_LIVE_APPROVED_CONTRACT_SHA256=
+# Missing/changed contract fingerprint, ambiguous identity or recurring VAT price
+# prevents purchase. The retained cart is not guaranteed to reserve stock.
