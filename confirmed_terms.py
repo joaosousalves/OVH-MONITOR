@@ -16,7 +16,7 @@ from ksle_monitor import STORAGE_NAMES, STORAGE_PRIORITIES
 VAT = Decimal("0.23")
 SETUP_NET = Decimal("26.99")
 MONTHLY_CAP = Decimal("37.00")
-INITIAL_CAP = Decimal("80.00")
+INITIAL_CAP = Decimal("90.00")
 NET_MONTHLY_BY_STORAGE = {
     "hybridsoftraid-2x4000sa-2x500nvme": Decimal("26.99"),
     "softraid-4x960ssd": Decimal("27.99"),
