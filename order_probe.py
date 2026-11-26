@@ -226,7 +226,8 @@ def parse_hardware_fqn(target_fqn: str, plan_code: str) -> tuple[str, str]:
 
 def addon_hardware_code(addon_code: str, plan_code: str) -> str:
     """Normalize the public catalog addon to the stock FQN component."""
-    suffix = "-" + plan_code
+    # KS-7 commercial revision 24sk702 reuses the 24sk70 hardware addons.
+    suffix = "-" + ("24sk70" if plan_code == "24sk702" else plan_code)
     return addon_code[:-len(suffix)] if addon_code.endswith(suffix) else addon_code
 
 
