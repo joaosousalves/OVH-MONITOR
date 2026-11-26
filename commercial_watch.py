@@ -249,6 +249,13 @@ def run_commercial_watch() -> int:
         watch_path = Path(os.getenv("OVH_COMMERCIAL_WATCH_STATE", DEFAULT_WATCH_PATH))
         from live_purchase import enabled as live_enabled, try_retained_checkout, prepare_live_cart
         live = live_enabled()
+        LOG.info(
+            "KS-LE-6 (27skle06-v1) 128GB watcher: mode=%s; max servers=%d; "
+            "initial cap=%s EUR; monthly cap=%s EUR; contract SHA256 pin=%s",
+            "LIVE_CHECKOUT" if live else "AUDIT_ONLY", policy.max_servers,
+            policy.max_total_eur, policy.max_monthly_eur,
+            "set" if os.getenv("OVH_LIVE_APPROVED_CONTRACT_SHA256", "").strip() else "unset",
+        )
         retained_path = watch_path.with_name("retained-cart.json")
         quota = PurchaseQuota(
             Path(os.getenv("OVH_AUTO_BUY_QUOTA_JOURNAL", DEFAULT_PATH)),
