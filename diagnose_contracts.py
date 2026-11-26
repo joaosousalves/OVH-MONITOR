@@ -96,7 +96,26 @@ def diagnose(client, *, review_path=DEFAULT_REVIEW, stock_fetch=retrieve_stock):
             try:
                 catalog_selection(catalog, "default", stock.datacenter, plan,
                                   target_fqn=stock.fqn)
-            except OrderProbeError:
+            except OrderProbeError as exc:
+                # catalog_selection uses only the public catalog and the
+                # public stock FQN; no authenticated cart exists here.
+                safe_fqn = stock.fqn if re.fullmatch(r"[a-zA-Z0-9_.-]{1,200}", stock.fqn) else "<invalid FQN>"
+                reason = str(exc)
+                if not re.fullmatch(r"[a-zA-Z0-9 ._='/-]{1,220}", reason):
+                    reason = "Catalog selection rejected (unexpected error format)"
+                print(f"Rejected {safe_fqn} at {stock.datacenter.upper()}: {reason}", flush=True)
+                plan_row = next((p for p in catalog.get("plans", [])
+                                 if isinstance(p, dict) and p.get("planCode") == plan), {})
+                for family in plan_row.get("addonFamilies", []):
+                    if not isinstance(family, dict):
+                        continue
+                    name = family.get("name")
+                    if name not in ("storage", "memory"):
+                        continue
+                    addons = family.get("addons")
+                    codes = [v for v in addons[:40]
+                             if isinstance(v, str) and re.fullmatch(r"[a-zA-Z0-9_.-]{1,160}", v)] if isinstance(addons, list) else []
+                    print(f"  Catalog {name} (mandatory={family.get('mandatory') is True}): {codes}", flush=True)
                 continue
             selected = (plan, stock)
             break
