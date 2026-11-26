@@ -27,6 +27,7 @@ from ksle_monitor import (
 )
 from order_probe import OrderProbeError
 from retained_cart import ensure_no_active_cart, persist_retained
+from commitment_guard import CommitmentSafetyError
 from pending_orders import PendingOrdersError
 from purchase_guard import (
     DEFAULT_JOURNAL, OrderJournal, PurchasePolicy, PurchaseSafetyError,
@@ -211,14 +212,14 @@ def watch_once(policy: PurchasePolicy, *, stocks: list[Stock], path: Path,
         save_state(path, state)
         try:
             report = audit()
-            if not isinstance(report, str) or not report.startswith("COMMERCIAL AUDIT PARTIAL"):
+            if not isinstance(report, str) or not report.startswith(("COMMERCIAL AUDIT PARTIAL", "LIVE CART PREPARED")):
                 # Includes sudden quota saturation or disappearing stock;
                 # never email these as an approved/completed quote.
                 raise PurchaseSafetyError("No complete eligible commercial quote")
             if len(report) > MAX_REPORT_CHARS:
                 raise PurchaseSafetyError("Commercial audit report exceeds bounded size")
         except (PurchaseSafetyError, PendingOrdersError, AccountReconciliationError,
-                OrderProbeError, MonitorError) as exc:
+                OrderProbeError, MonitorError, CommitmentSafetyError) as exc:
             state["attempt"] = {"key": candidate.key, "status": "failed",
                                 "failures": failures}
             save_state(path, state)
@@ -246,7 +247,7 @@ def run_commercial_watch() -> int:
         policy = PurchasePolicy.from_env()
         smtp = mail_config()
         watch_path = Path(os.getenv("OVH_COMMERCIAL_WATCH_STATE", DEFAULT_WATCH_PATH))
-        from live_purchase import enabled as live_enabled, try_retained_checkout
+        from live_purchase import enabled as live_enabled, try_retained_checkout, prepare_live_cart
         live = live_enabled()
         retained_path = watch_path.with_name("retained-cart.json")
         quota = PurchaseQuota(
@@ -283,11 +284,13 @@ def run_commercial_watch() -> int:
                 max_servers=policy.max_servers,
             )
             journal = OrderJournal(Path(os.getenv("OVH_AUTO_BUY_JOURNAL", DEFAULT_JOURNAL)))
-            report = audit_commercial(
-                policy, stocks=stocks, client=api, journal=journal, quota=quota,
-                cart_retainer=lambda **record: persist_retained(retained_path, **record),
-                allow_confirmed=live,
-            )
+            if live:
+                report = prepare_live_cart(policy, api, stocks, journal, quota, retained_path)
+            else:
+                report = audit_commercial(
+                    policy, stocks=stocks, client=api, journal=journal, quota=quota,
+                    cart_retainer=lambda **record: persist_retained(retained_path, **record),
+                )
             if live and retained_path.exists():
                 status = try_retained_checkout(policy, api, journal, quota, retained_path)
                 if status is not None:
