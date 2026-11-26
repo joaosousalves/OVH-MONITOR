@@ -71,9 +71,12 @@ def diagnose(client, *, review_path=DEFAULT_REVIEW, stock_fetch=retrieve_stock):
     catalog = client.request("GET", "/order/catalog/public/eco",
                              query={"ovhSubsidiary": "PT"})
     selected = None
+    print("Public PT catalog retrieved.", flush=True)
     for model in TEST_MODELS:
         plan = TEST_PLANS[model]
         stocks = stock_fetch(plan_code=plan)
+        available = [s for s in stocks if s.available and s.datacenter in ALLOWED_DATACENTERS]
+        print(f"{model}: {len(available)} available EU/CA configuration(s)", flush=True)
         for stock in stocks:
             if not stock.available or stock.datacenter not in ALLOWED_DATACENTERS:
                 continue
@@ -89,12 +92,15 @@ def diagnose(client, *, review_path=DEFAULT_REVIEW, stock_fetch=retrieve_stock):
     if selected is None:
         raise OrderProbeError("No eligible alternate model currently in stock; no cart created")
     plan, stock = selected
+    print(f"Selected {plan}, {stock.datacenter.upper()}; rechecking exact stock.", flush=True)
     verify_available_test_fqn(plan, stock.fqn, stock.datacenter)
+    print("Exact stock confirmed; preparing one temporary cart.", flush=True)
     observed = {}
     trace = SchemaTrace()
     commercial = []
     def observe_schema(stage, payload=None):
         trace.capture(stage, payload)
+        print(f"Diagnostic stage: {stage}", flush=True)
         if len(commercial) < 24:
             values = commercial_values(stage, payload)
             if values is not None:
@@ -124,6 +130,33 @@ def diagnose(client, *, review_path=DEFAULT_REVIEW, stock_fetch=retrieve_stock):
           "until the contracts have been reviewed and the live set matches exactly.")
 
 
+def safe_error(exc):
+    """Only fixed descriptions and HTTP status; never echo raw API errors."""
+    message = str(exc)
+    if message == "No eligible alternate model currently in stock; no cart created":
+        return "No currently available alternate model matches the PT catalog"
+    if message.startswith("Requested configuration now has status"):
+        return "Stock disappeared during exact configuration recheck"
+    if message.startswith("Requested hardware FQN/datacenter not present"):
+        return "Exact configuration disappeared from the stock feed"
+    if message.startswith("No P1M/default offer found"):
+        return "Selected cart has no monthly default offer"
+    status = re.search(r"OVHcloud API ([1-5][0-9]{2}) on (GET|POST|DELETE) ", message)
+    if status:
+        route = message.split(" on ", 1)[1].split(":", 1)[0]
+        # Strip all dynamic cart and item identifiers from the endpoint.
+        route = re.sub(r"(/order/cart/)[^/ ]+", r"\g<1>{cartId}", route)
+        route = re.sub(r"(/item/)[^/ ]+", r"\g<1>{itemId}", route)
+        if not re.fullmatch(r"(GET|POST|DELETE) /order/(?:catalog/public/eco|cart(?:/\{cartId\}(?:/(?:assign|eco(?:/options)?|checkout|item(?:/\{itemId\}(?:/configuration(?:/[0-9]+)?)?)?))?)?)", route):
+            route = status.group(2) + " request"
+        return f"OVH HTTP {status.group(1)} at {route}"
+    if message.startswith("OVHcloud connection error"):
+        return "OVH API connection or timeout error"
+    if message.startswith("Unable to verify current"):
+        return "Stock API recheck failed"
+    return type(exc).__name__ + " (see last diagnostic stage above)"
+
+
 def main():
     try:
         # Diagnostic uses only the existing non-purchasing cart transport.
@@ -132,7 +165,7 @@ def main():
         diagnose(make_api_client())
         return 0
     except (OrderProbeError, PurchaseSafetyError, MonitorError, OSError, ValueError) as exc:
-        print(f"Diagnostic incomplete: {type(exc).__name__}; no order/payment submitted.",
+        print(f"Diagnostic incomplete: {safe_error(exc)}; no order/payment submitted.",
               file=sys.stderr)
         return 1
 
