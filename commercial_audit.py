@@ -121,7 +121,8 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
                      pending_check: Callable[[OVHCartClient, int], PendingOrderInventory]
                      = reconcile_pending_orders,
                      payment_check: Callable[[OVHCartClient], PaymentEvidence]
-                     = inspect_payment_evidence) -> str:
+                     = inspect_payment_evidence,
+                     cart_retainer: Callable[..., bool] | None = None) -> str:
     """One candidate, one bounded remote scan, one temporary cart, no order."""
     if policy.enabled:
         raise PurchaseSafetyError("Live checkout is not authorized")
@@ -136,7 +137,10 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
     if client is None:
         raise PurchaseSafetyError("OVHcloud API credentials required for commercial audit")
 
+    import time
+    scan_started = time.monotonic()
     remote = pending_check(client, policy.max_servers)
+    LOG.info("Commercial account scan took %.2fs", time.monotonic() - scan_started)
     if remote.overlap_unverified:
         raise PurchaseSafetyError("Account/pending-order identity overlap unresolved")
     if remote.upper_bound >= policy.max_servers:
@@ -145,7 +149,9 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
             f"{policy.max_servers}; no cart or order."
         )
 
+    stock_started = time.monotonic()
     verify_available_test_fqn("27skle06-v1", candidate.fqn, candidate.datacenter)
+    LOG.info("Commercial stock recheck took %.2fs", time.monotonic() - stock_started)
     results: dict[str, Any] = {}
 
     def check_quote(quote: Any) -> None:
@@ -172,10 +178,25 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
             raise PurchaseSafetyError("Unrecognized cart identity readback")
         results["identity"] = identity
 
+    def retain_if_eligible(**record: Any) -> bool:
+        identity = results.get("identity", identity_unavailable())
+        if identity.status == "CONFLICT":
+            return False
+        reference = for_storage(candidate.storage)
+        if results["initial"].with_tax > reference.first_payment_gross:
+            return False
+        monthly, _ = results["gross_renewal"]
+        if monthly is not None and monthly > min(policy.max_monthly_eur, reference.monthly_gross):
+            return False
+        results["retained"] = cart_retainer(**record) is True
+        return results["retained"]
+
+    retention_args = {"cart_retainer": retain_if_eligible} if cart_retainer is not None else {}
     test_order(
         client, datacenter=candidate.datacenter, plan_code="27skle06-v1",
         target_fqn=candidate.fqn, quote_validator=check_quote,
         renewal_observer=check_renewals, identity_observer=check_identity,
+        **retention_args,
     )
     if "initial" not in results or "renewal" not in results or "gross_renewal" not in results:
         raise PurchaseSafetyError("Incomplete temporary cart commercial evidence")
@@ -274,6 +295,8 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         + f"Remote service + open order count {remote.upper_bound}/"
         f"{policy.max_servers}. Checkout/payment remain DISABLED. "
         + evidence_matrix
+        + ("CART RETAINED FOR REVIEW: private state retained-cart.json; no stock reservation guaranteed. "
+           if results.get("retained") else "")
         + auto_buy_status
     )
 
