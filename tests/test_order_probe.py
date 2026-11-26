@@ -122,6 +122,29 @@ class OrderProbeTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "POST" and call[1].endswith("/checkout")
                              for call in client.calls))
 
+    def test_live_deferred_readback_only_retains_no_checkout(self):
+        client = ReadbackClient()
+        fqn = f"{probe.PLAN_CODE}.ram-128g-ddr4-ecc-2400.hybridsoftraid-2x4000sa-2x500nvme"
+        observer = MagicMock()
+        retainer = MagicMock(return_value=True)
+        receipts = MagicMock()
+        probe.test_order(client, target_fqn=fqn, quote_validator=MagicMock(),
+                         identity_observer=observer, cart_retainer=retainer,
+                         receipt_observer=receipts, defer_identity_readback=True)
+        self.assertEqual(receipts.call_count, 4)
+        self.assertEqual(observer.call_args.args[0].status, "UNVERIFIED")
+        retainer.assert_called_once()
+        self.assertFalse(any(method == "GET" and "/item" in path
+                             for method, path, _, _ in client.calls))
+        self.assertFalse(any(method == "POST" and path.endswith("/checkout")
+                             for method, path, _, _ in client.calls))
+
+    def test_deferred_readback_rejects_without_receipts_and_retainer(self):
+        client = FakeClient()
+        with self.assertRaises(probe.OrderProbeError):
+            probe.test_order(client, defer_identity_readback=True)
+        self.assertEqual(client.calls, [])
+
     def test_retainer_failure_cleans_up_cart(self):
         client = ReadbackClient()
         fqn = f"{probe.PLAN_CODE}.ram-128g-ddr4-ecc-2400.hybridsoftraid-2x4000sa-2x500nvme"
