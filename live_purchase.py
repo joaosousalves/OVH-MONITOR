@@ -16,6 +16,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from cart_identity import inspect_cart_identity
+from cart_receipts import creation_receipt, verify_creation_receipts
 from catalog_checkout_evidence import catalog_quote_evidence
 from commercial_audit import validate_initial_price, _renewal_vat_gross
 from commitment_guard import inspect_commitment, CommitmentSafetyError
@@ -117,8 +118,10 @@ def verify_retained(client, policy, record, review_path):
     # Save the exact contract evidence even if another check is blocked.
     digest, payload = contract_digest(quote.get("contracts"))
     _write_review(review_path, digest, payload)
+    if identity.status == "CONFLICT":
+        raise PurchaseSafetyError("Exact retained cart identity conflicts")
     if not identity.verified:
-        raise PurchaseSafetyError("Exact retained cart identity not verified")
+        verify_creation_receipts(record, addons, items, configuration, configs)
     inspect_commitment(quote, *items)
     monthly_cap = min(policy.max_monthly_eur, reference.monthly_gross)
     initial_cap = min(policy.max_total_eur, reference.first_payment_gross)
@@ -127,7 +130,7 @@ def verify_retained(client, policy, record, review_path):
     # Explicit renewal rows, if returned, must not contradict the catalog.
     has_renewal = any(isinstance(p, dict) and p.get("label") == "RENEW"
                       for item in items if isinstance(item, dict)
-                      for p in item.get("prices", []) if isinstance(item.get("prices"), list))
+                      for p in (item["prices"] if isinstance(item.get("prices"), list) else []))
     if has_renewal:
         explicit, reason = _renewal_vat_gross(items)
         renewal = inspect_cart_renewals(items)
@@ -172,6 +175,10 @@ def prepare_live_cart(policy, client, stocks, journal, quota, retained_path):
     ensure_no_active_cart(retained_path, client)
     reference = for_storage(candidate.storage)
     evidence = {}
+    receipts = []
+
+    def record_receipt(code, response):
+        receipts.append(creation_receipt(code, response))
 
     def initial(quote):
         evidence["initial"] = validate_initial_price(
@@ -192,14 +199,14 @@ def prepare_live_cart(policy, client, stocks, journal, quota, retained_path):
     def retain(**record):
         if "initial" not in evidence or "identity" not in evidence:
             return False
-        return persist_retained(retained_path, **record)
+        return persist_retained(retained_path, **record, receipts=receipts)
 
     from cart_schema_diagnostic import SchemaTrace
     trace = SchemaTrace()
     test_order(client, datacenter=candidate.datacenter, target_fqn=candidate.fqn,
                quote_validator=initial, renewal_observer=renewals,
                identity_observer=identity, schema_observer=trace.capture,
-               cart_retainer=retain)
+               cart_retainer=retain, receipt_observer=record_receipt)
     if read_retained(retained_path) is None:
         raise PurchaseSafetyError("Cart could not be retained")
     return (f"LIVE CART PREPARED: {candidate.fqn} at {candidate.datacenter.upper()}; "
