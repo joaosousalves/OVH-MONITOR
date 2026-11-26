@@ -129,10 +129,10 @@ def _inspect_readback(plan_code: str, base_item_id: int,
         code = item.get("planCode")
         if code is None:
             incomplete = True
-            continue
-        if not isinstance(code, str) or code not in expected or code in seen:
+        elif not isinstance(code, str) or code not in expected or code in seen:
             return _bad("unexpected or duplicated item plan")
-        seen.add(code)
+        else:
+            seen.add(code)
         item_id = item.get("itemId")
         if item_id is None:
             incomplete = True
