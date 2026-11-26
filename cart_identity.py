@@ -99,7 +99,8 @@ def inspect_manual_cart_identity(*, plan_code: str, fqn: str, datacenter: str,
             or not isinstance(configurations, dict)):
         return _bad("unexpected diagnostic plan, hardware or location")
     _, memory, storage = fqn.split(".")
-    if (not {f"{memory}-{plan_code}", f"{storage}-{plan_code}"}.issubset(set(addons))
+    addon_plan = "24sk70" if plan_code == "24sk702" else plan_code
+    if (not {f"{memory}-{addon_plan}", f"{storage}-{addon_plan}"}.issubset(set(addons))
             or configurations.get("dedicated_datacenter") != datacenter
             or configurations.get("region") != ("canada" if datacenter == "bhs" else "europe")
             or configurations.get("dedicated_os") != "none_64.en"):
