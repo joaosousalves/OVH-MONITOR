@@ -41,17 +41,32 @@ class DiagnoseContractsTests(unittest.TestCase):
     def test_ks7_catalog_variant_selected_for_diagnostic_only(self):
         from purchase_guard import APPROVED_FQNS
         plan = d.TEST_PLANS["ks-7-alt"]
-        stock = Stock(plan + ".ram-128g-ddr4-ecc-2400.softraid-2x4000sa",
-                      "softraid-2x4000sa", "bhs", "1H-low")
+        stock = Stock(plan + ".ram-128g-ecc-2400.softraid-2x4000sa",
+                      "softraid-2x4000sa", "rbx", "1H-low")
         client = Mock()
-        client.request.return_value = {"plans": [{"planCode": plan}]}
+        client.request.return_value = {"plans": [{
+            "planCode": plan,
+            "configurations": [
+                {"name": "dedicated_datacenter", "values": ["rbx"]},
+                {"name": "region", "values": ["europe"]},
+                {"name": "dedicated_os", "values": ["none_64.en"]},
+            ],
+            "addonFamilies": [
+                {"name": "storage", "mandatory": True,
+                 "addons": ["softraid-2x4000sa-24sk70", "softraid-2x500nvme-24sk70"]},
+                {"name": "memory", "mandatory": True,
+                 "addons": ["ram-128g-ecc-2400-24sk70", "ram-256g-ecc-2400-24sk70"]},
+            ],
+        }]}
+        _, addons = d.catalog_selection(client.request.return_value, "default", "rbx",
+                                       plan, target_fqn=stock.fqn)
+        self.assertEqual(addons, ["softraid-2x4000sa-24sk70", "ram-128g-ecc-2400-24sk70"])
         def fake_order(client, **kw):
             self.assertEqual(kw["plan_code"], plan)
             self.assertNotIn("cart_retainer", kw)
             kw["quote_validator"]({"contracts": [{"name": "Terms", "content": "Test"}]})
             kw["renewal_observer"]([])
         with tempfile.TemporaryDirectory() as td, \
-             patch.object(d, "catalog_selection", return_value=({}, [])), \
              patch.object(d, "verify_available_test_fqn"), \
              patch.object(d, "test_order", side_effect=fake_order) as probe, \
              patch.object(d, "manual_cart_report", return_value="NO PURCHASE"), \
