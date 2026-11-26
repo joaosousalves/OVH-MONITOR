@@ -57,6 +57,7 @@ class LiveCheckoutTests(unittest.TestCase):
         def submit(cart_id):
             self.assertEqual(cart_id, "cart-123")
             self.assertEqual(self.quota.read()[0]["status"], "reserved")
+            self.assertEqual(self.quota.read()[0]["cartId"], cart_id)
             return {"orderId": 12345}
         self.client._submit_live_checkout.side_effect = submit
         with patch.object(live, "reconcile_pending_orders", return_value=self.inventory), \
@@ -86,6 +87,15 @@ class LiveCheckoutTests(unittest.TestCase):
                 "autoPayWithPreferredPaymentMethod": True,
                 "waiveRetractationPeriod": False,
             })
+
+    def test_confirmed_cart_cannot_be_reused_after_crash(self):
+        slot = self.quota.reserve(fqn=APPROVED_FQNS[0], datacenter="bhs",
+                                  total=Decimal("66.40"), cart_id="cart-123")
+        self.quota.update_outcome(slot=slot, status="submitted", order_id=12345)
+        self.quota.update_outcome(slot=slot, status="confirmed", order_id=12345)
+        self.assertIsNone(self.run_checkout())
+        self.assertFalse(self.cart.exists())
+        self.client._submit_live_checkout.assert_not_called()
 
     def test_contract_digest_changes_with_terms(self):
         a = [{"name": "Terms", "content": "one month"}]
