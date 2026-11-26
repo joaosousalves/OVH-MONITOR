@@ -49,6 +49,7 @@ LOGGER = logging.getLogger("ksle-order-probe")
 SAFE_ROUTES = {
     "GET": [
         re.compile(r"^/order/catalog/public/eco$"),
+        re.compile(r"^/order/cart/[A-Za-z0-9-]+$"),  # retained cart status only
         re.compile(r"^/order/cart/[A-Za-z0-9-]+/eco$"),
         re.compile(r"^/order/cart/[A-Za-z0-9-]+/checkout$"),
         # Additional observational cart readback: these never submit or pay.
