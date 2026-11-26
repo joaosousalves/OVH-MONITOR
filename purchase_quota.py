@@ -13,6 +13,7 @@ from decimal import Decimal
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import tempfile
@@ -106,6 +107,12 @@ class PurchaseQuota:
                     raise PurchaseSafetyError("Submitted record requires known order ID")
             elif "orderId" in item:
                 raise PurchaseSafetyError("Unsubmitted or uncertain record has unexpected order ID")
+            if "cartId" in item and (not isinstance(item["cartId"], str)
+                    or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", item["cartId"])):
+                raise PurchaseSafetyError("Invalid recorded cart identity")
+            if "cartId" in item and any(other is not item and isinstance(other, dict)
+                    and other.get("cartId") == item["cartId"] for other in attempts):
+                raise PurchaseSafetyError("Repeated cart identity in purchase quota")
             slots.add(slot)
         if sorted(slots) != list(range(1, len(attempts) + 1)):
             raise PurchaseSafetyError("Nonconsecutive purchase slots; refusing further purchases")
@@ -155,7 +162,8 @@ class PurchaseQuota:
         finally:
             os.close(fd)
 
-    def reserve(self, *, fqn: str, datacenter: str, total: Decimal) -> int | None:
+    def reserve(self, *, fqn: str, datacenter: str, total: Decimal,
+                cart_id: str | None = None) -> int | None:
         """Reserve one of two global slots; return slot number or None if full.
 
         A second identical KS-LE-6 configuration is allowed after the
@@ -168,6 +176,9 @@ class PurchaseQuota:
         if not isinstance(total, Decimal) or not total.is_finite() or total <= 0:
             raise PurchaseSafetyError("Initial EUR total must be a positive Decimal")
         total = parse_eur(total, label="initial EUR total")
+        if cart_id is not None and (not isinstance(cart_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", cart_id)):
+            raise PurchaseSafetyError("Invalid checkout cart identity")
 
         def apply(attempts: list[dict]) -> int | None:
             if len(attempts) >= self.max_servers:
@@ -176,6 +187,8 @@ class PurchaseQuota:
                 raise PurchaseSafetyError(
                     "Previous purchase is unresolved; cannot reserve another server"
                 )
+            if cart_id is not None and any(row.get("cartId") == cart_id for row in attempts):
+                raise PurchaseSafetyError("Cart already used for an earlier checkout")
             slot = len(attempts) + 1
             attempts.append({
                 "slot": slot,
@@ -185,6 +198,7 @@ class PurchaseQuota:
                 "totalEur": str(total),
                 "status": "reserved",
                 "createdAt": datetime.now(timezone.utc).isoformat(),
+                **({"cartId": cart_id} if cart_id is not None else {}),
             })
             self._write(attempts)
             return slot
