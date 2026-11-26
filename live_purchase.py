@@ -8,6 +8,8 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
+import time
 import os
 import re
 import stat
@@ -31,6 +33,9 @@ from purchase_guard import PurchaseSafetyError, choose_candidate
 from purchase_quota import OPEN_STATES
 from retained_cart import read_retained, ensure_no_active_cart, persist_retained, RetainedCartError
 from renewal_pricing import inspect_cart_renewals
+
+
+LOG = logging.getLogger("ksle-live-purchase")
 
 
 def enabled():
@@ -100,6 +105,7 @@ def verify_retained(client, policy, record, review_path):
         raise PurchaseSafetyError("Retained datacenter outside approved policy")
     reference = for_storage(fqn.split(".")[2])
     base = "/order/cart/" + record["cart_id"]
+    verification_started = time.monotonic()
     catalog = client.request("GET", "/order/catalog/public/eco",
                              query={"ovhSubsidiary": "PT"})
     configs, addons = catalog_selection(catalog, PREFERRED_STORAGE_OPTION, dc,
@@ -151,6 +157,7 @@ def verify_retained(client, policy, record, review_path):
     inspect_commitment(final_quote)
     if final_initial != initial or final_monthly != monthly or final_digest != digest:
         raise PurchaseSafetyError("Quote or contracts changed during checkout verification")
+    LOG.info("Live final cart/catalog/payment verification took %.2fs", time.monotonic() - verification_started)
     return final_initial.with_tax
 
 
@@ -204,10 +211,13 @@ def prepare_live_cart(policy, client, stocks, journal, quota, retained_path):
 
     from cart_schema_diagnostic import SchemaTrace
     trace = SchemaTrace()
+    cart_started = time.monotonic()
     test_order(client, datacenter=candidate.datacenter, target_fqn=candidate.fqn,
                quote_validator=initial, renewal_observer=renewals,
                identity_observer=identity, schema_observer=trace.capture,
-               cart_retainer=retain, receipt_observer=record_receipt)
+               cart_retainer=retain, receipt_observer=record_receipt,
+               defer_identity_readback=True)
+    LOG.info("Live cart creation and retention took %.2fs", time.monotonic() - cart_started)
     if read_retained(retained_path) is None:
         raise PurchaseSafetyError("Cart could not be retained")
     return (f"LIVE CART PREPARED: {candidate.fqn} at {candidate.datacenter.upper()}; "
@@ -255,7 +265,9 @@ def try_retained_checkout(policy, client, journal, quota, retained_path):
         else:
             return None  # expired or missing; no order
         # Fresh quota scan, independent of the earlier commercial audit.
-        remote = reconcile_pending_orders(client, policy.max_servers)
+        scan_started = time.monotonic()
+        remote = reconcile_pending_orders(client, policy.max_servers, read_workers=3)
+        LOG.info("Live fresh account reconciliation took %.2fs", time.monotonic() - scan_started)
         if (remote.overlap_unverified or remote.upper_bound >= policy.max_servers
                 or remote.upper_bound < len(entries)):
             raise PurchaseSafetyError("Remote quota full or not reconciled")
@@ -266,7 +278,9 @@ def try_retained_checkout(policy, client, journal, quota, retained_path):
         if slot is None:
             raise PurchaseSafetyError("Local quota reached")
         try:
+            submit_started = time.monotonic()
             response = client._submit_live_checkout(record["cart_id"])
+            LOG.info("Live checkout POST took %.2fs", time.monotonic() - submit_started)
             order_id = response.get("orderId") if isinstance(response, dict) else None
             if type(order_id) is not int or not 0 < order_id < 10**15:
                 raise OrderProbeError("Checkout response missing valid order identifier")
