@@ -614,7 +614,7 @@ def main(argv: list[str] | None = None) -> int:
                        help="Phase C: GET-only recorded order status, never retries")
     parser.add_argument("--datacenter", default="bhs", help="Datacenter for --test-order (default: bhs)")
     parser.add_argument("--storage", default="preferred", help="Storage addon code for --test-order (default: preferred)")
-    parser.add_argument("--test-plan", choices=("ks-le-6", "ks-le-1", "ks-le-2", "ks-le-3", "ks-4"), default="ks-le-6",
+    parser.add_argument("--test-plan", choices=("ks-le-6", "ks-le-1", "ks-le-2", "ks-le-3", "ks-4", "ks-7", "ks-7-alt", "ks-7-legacy"), default="ks-le-6",
                         help="Product for manual --test-order only; stock timer remains KS-LE-6")
     parser.add_argument("--test-fqn", default=None,
                         help="Exact stock FQN for manual cart test; selects its RAM and storage")
