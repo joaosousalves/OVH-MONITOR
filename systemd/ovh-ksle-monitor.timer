@@ -1,10 +1,10 @@
 [Unit]
-Description=Check KS-LE-6 availability every 30 seconds (subject to API backoff)
+Description=Check KS-LE-6 availability every 5 seconds (subject to API backoff)
 
 [Timer]
-OnBootSec=30s
-OnUnitInactiveSec=30s
-AccuracySec=1s
+OnBootSec=5s
+OnUnitInactiveSec=5s
+AccuracySec=100ms
 RandomizedDelaySec=0
 Unit=ovh-ksle-monitor.service
 
