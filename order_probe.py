@@ -156,6 +156,21 @@ class OVHCartClient:
         method = method.upper()
         if not any(rule.fullmatch(path) for rule in SAFE_ROUTES.get(method, [])):
             raise OrderProbeError(f"Blocked unsupported operation: {method} {path}")
+        return self._request_validated(method, path, payload, query)
+
+    def _submit_live_checkout(self, cart_id: str) -> Any:
+        """Private transport for the live orchestrator after durable reservation."""
+        if os.getenv("OVH_LIVE_CHECKOUT_ENABLED", "").lower() != "true":
+            raise OrderProbeError("Live checkout disabled")
+        if not isinstance(cart_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", cart_id):
+            raise OrderProbeError("Invalid checkout cart identifier")
+        return self._request_validated("POST", "/order/cart/" + cart_id + "/checkout", {
+            "autoPayWithPreferredPaymentMethod": True,
+            "waiveRetractationPeriod": False,
+        })
+
+    def _request_validated(self, method: str, path: str, payload: dict | None = None,
+                           query: dict | None = None) -> Any:
         if method == "GET" and payload is not None:
             raise OrderProbeError("GET must not include a body")
         url = BASE_URL + path
