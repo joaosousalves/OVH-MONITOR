@@ -425,7 +425,7 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
     Default diagnostics always delete the cart. An explicit retainer may
     take ownership of a fully built exact KS-LE-6 cart by durably recording
     its identifier and returning True. Failed builds still clean up.
-    """ 
+    """
     if cart_retainer is not None and (
             plan_code != PLAN_CODE or target_fqn is None or
             quote_validator is None or identity_observer is None):
