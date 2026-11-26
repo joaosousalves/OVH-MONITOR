@@ -16,6 +16,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from cart_identity import inspect_cart_identity
+from catalog_checkout_evidence import catalog_quote_evidence
 from commercial_audit import validate_initial_price, _renewal_vat_gross
 from commitment_guard import inspect_commitment, CommitmentSafetyError
 from confirmed_terms import for_storage
@@ -119,12 +120,19 @@ def verify_retained(client, policy, record, review_path):
     if not identity.verified:
         raise PurchaseSafetyError("Exact retained cart identity not verified")
     inspect_commitment(quote, *items)
-    monthly, reason = _renewal_vat_gross(items)
-    renewal = inspect_cart_renewals(items)
-    if monthly is None or renewal.amount_eur is None or monthly < renewal.amount_eur:
-        raise PurchaseSafetyError("VAT-inclusive monthly renewal unverified: " + reason)
-    if monthly <= 0 or monthly > min(policy.max_monthly_eur, reference.monthly_gross):
-        raise PurchaseSafetyError("Monthly amount exceeds approved reference/cap")
+    monthly_cap = min(policy.max_monthly_eur, reference.monthly_gross)
+    initial_cap = min(policy.max_total_eur, reference.first_payment_gross)
+    initial, monthly = catalog_quote_evidence(
+        catalog, fqn, dc, quote, max_initial=initial_cap, max_monthly=monthly_cap)
+    # Explicit renewal rows, if returned, must not contradict the catalog.
+    has_renewal = any(isinstance(p, dict) and p.get("label") == "RENEW"
+                      for item in items if isinstance(item, dict)
+                      for p in item.get("prices", []) if isinstance(item.get("prices"), list))
+    if has_renewal:
+        explicit, reason = _renewal_vat_gross(items)
+        renewal = inspect_cart_renewals(items)
+        if explicit != monthly or renewal.amount_eur is None or explicit < renewal.amount_eur:
+            raise PurchaseSafetyError("Explicit renewal differs from catalog: " + reason)
     # An explicit owner approval of the exact reviewed contract set is
     # required; unknown legal terms must not be accepted automatically.
     approved = os.getenv("OVH_LIVE_APPROVED_CONTRACT_SHA256", "").strip().lower()
@@ -133,10 +141,11 @@ def verify_retained(client, policy, record, review_path):
     if not inspect_payment_evidence(client).saved_default_valid:
         raise PurchaseSafetyError("No verified valid default one-click payment method")
     final_quote = client.request("GET", base + "/checkout")
-    final_initial = validate_initial_price(final_quote, min(policy.max_total_eur, reference.first_payment_gross))
+    final_initial, final_monthly = catalog_quote_evidence(
+        catalog, fqn, dc, final_quote, max_initial=initial_cap, max_monthly=monthly_cap)
     final_digest, _ = contract_digest(final_quote.get("contracts"))
     inspect_commitment(final_quote)
-    if final_initial != initial or final_digest != digest:
+    if final_initial != initial or final_monthly != monthly or final_digest != digest:
         raise PurchaseSafetyError("Quote or contracts changed during checkout verification")
     return final_initial.with_tax
 
