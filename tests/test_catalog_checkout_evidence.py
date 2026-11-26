@@ -84,8 +84,12 @@ class CatalogCheckoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, patch.object(live,"inspect_payment_evidence",return_value=Mock(saved_default_valid=True)):
             review=Path(td)/"review.json"
             with patch.dict(os.environ,{"OVH_LIVE_APPROVED_CONTRACT_SHA256":""}):
-                with self.assertRaisesRegex(PurchaseSafetyError,"fingerprint"):
-                    live.verify_retained(client,policy,self.record,review)
+                self.assertEqual(live.verify_retained(client,policy,self.record,review),Decimal("66.40"))
+                self.assertTrue(review.exists())
+            for pin in ("0"*64, "invalid"):
+                with patch.dict(os.environ,{"OVH_LIVE_APPROVED_CONTRACT_SHA256":pin}):
+                    with self.assertRaisesRegex(PurchaseSafetyError,"fingerprint"):
+                        live.verify_retained(client,policy,self.record,review)
             with patch.dict(os.environ,{"OVH_LIVE_APPROVED_CONTRACT_SHA256":digest}):
                 self.assertEqual(live.verify_retained(client,policy,self.record,review),Decimal("66.40"))
         client._submit_live_checkout.assert_not_called()
