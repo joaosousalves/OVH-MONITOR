@@ -108,6 +108,29 @@ class ReadbackClient(FakeClient):
 
 
 class OrderProbeTests(unittest.TestCase):
+    def test_opt_in_cart_retainer_takes_ownership_only_after_quote(self):
+        client = ReadbackClient()
+        retainer = MagicMock(return_value=True)
+        quote_validator = MagicMock()
+        identity = MagicMock()
+        fqn = f"{probe.PLAN_CODE}.ram-128g-ddr4-ecc-2400.hybridsoftraid-2x4000sa-2x500nvme"
+        probe.test_order(client, target_fqn=fqn, quote_validator=quote_validator,
+                         identity_observer=identity, cart_retainer=retainer)
+        retainer.assert_called_once_with(cart_id="cart-123", item_id=12345,
+                                        fqn=fqn, datacenter="bhs", expire=None)
+        self.assertFalse(any(call[0] == "DELETE" for call in client.calls))
+        self.assertFalse(any(call[0] == "POST" and call[1].endswith("/checkout")
+                             for call in client.calls))
+
+    def test_retainer_failure_cleans_up_cart(self):
+        client = ReadbackClient()
+        fqn = f"{probe.PLAN_CODE}.ram-128g-ddr4-ecc-2400.hybridsoftraid-2x4000sa-2x500nvme"
+        with self.assertRaises(OSError):
+            probe.test_order(client, target_fqn=fqn, quote_validator=MagicMock(),
+                             identity_observer=MagicMock(),
+                             cart_retainer=MagicMock(side_effect=OSError("disk failure")))
+        self.assertTrue(any(call[0] == "DELETE" for call in client.calls))
+
     def test_catalog_preferred_disk_and_bhs(self):
         configs, addons = probe.catalog_selection(CATALOG, probe.PREFERRED_STORAGE_OPTION, "bhs")
         self.assertEqual(configs["region"], "canada")
