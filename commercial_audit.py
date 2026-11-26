@@ -100,7 +100,8 @@ def _renewal_vat_gross(items: Sequence[Any]) -> tuple[Decimal | None, str]:
     return total, "explicit gross item-level renewal components"
 
 
-def _local_guard(journal: OrderJournal, quota: PurchaseQuota, maximum: int) -> None:
+def _local_guard(journal: OrderJournal, quota: PurchaseQuota, maximum: int,
+                 *, allow_confirmed: bool = False) -> None:
     if journal.read() is not None:
         raise PurchaseSafetyError("Legacy purchase intent unresolved; commercial audit blocked")
     quota._check_legacy()
@@ -109,7 +110,7 @@ def _local_guard(journal: OrderJournal, quota: PurchaseQuota, maximum: int) -> N
         raise PurchaseSafetyError("Local two-server reservation cap reached")
     if any(item["status"] in OPEN_STATES for item in attempts):
         raise PurchaseSafetyError("Unresolved local purchase attempt blocks commercial audit")
-    if attempts:
+    if attempts and not allow_confirmed:
         # A local confirmed attempt and the remote service inventory may
         # describe the same server; never count them independently as proof.
         raise PurchaseSafetyError("Local purchase history requires manual cross-check")
@@ -122,7 +123,8 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
                      = reconcile_pending_orders,
                      payment_check: Callable[[OVHCartClient], PaymentEvidence]
                      = inspect_payment_evidence,
-                     cart_retainer: Callable[..., bool] | None = None) -> str:
+                     cart_retainer: Callable[..., bool] | None = None,
+                     allow_confirmed: bool = False) -> str:
     """One candidate, one bounded remote scan, one temporary cart, no order."""
     if policy.enabled:
         raise PurchaseSafetyError("Live checkout is not authorized")
@@ -133,7 +135,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
     candidate = choose_candidate(stocks, policy)
     if candidate is None:
         return "WAITING: no eligible KS-LE-6 128GB stock; no account/cart request, no order."
-    _local_guard(journal, quota, policy.max_servers)
+    _local_guard(journal, quota, policy.max_servers, allow_confirmed=allow_confirmed)
     if client is None:
         raise PurchaseSafetyError("OVHcloud API credentials required for commercial audit")
 
@@ -141,6 +143,8 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
     scan_started = time.monotonic()
     remote = pending_check(client, policy.max_servers)
     LOG.info("Commercial account scan took %.2fs", time.monotonic() - scan_started)
+    if allow_confirmed and remote.upper_bound < len(quota.read()):
+        raise PurchaseSafetyError("Remote inventory below confirmed local purchases")
     if remote.overlap_unverified:
         raise PurchaseSafetyError("Account/pending-order identity overlap unresolved")
     if remote.upper_bound >= policy.max_servers:
@@ -209,7 +213,7 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         LOG.info("Automatic audit: %s", trace.report())
     if "initial" not in results or "renewal" not in results or "gross_renewal" not in results:
         raise PurchaseSafetyError("Incomplete temporary cart commercial evidence")
-    _local_guard(journal, quota, policy.max_servers)
+    _local_guard(journal, quota, policy.max_servers, allow_confirmed=allow_confirmed)
     payment = payment_check(client)
     if not isinstance(payment, PaymentEvidence):
         raise PurchaseSafetyError("Unrecognized read-only payment verification result")
