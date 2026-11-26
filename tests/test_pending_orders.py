@@ -81,6 +81,34 @@ class PendingOrderTests(unittest.TestCase):
         self.assertEqual(result.open_orders, 0)
         self.assertEqual(len(fake.calls), 3)
 
+    def test_parallel_statuses_preserve_full_inventory(self):
+        responses = one_order(order_id=101)
+        responses.update({"/me/order": [101, 102, 103, 104],
+                          "/me/order/102/status": "delivered",
+                          "/me/order/103/status": "cancelled",
+                          "/me/order/104/status": "notPaid",
+                          "/me/order/104": {"orderId": 104, "expirationDate": "2020-01-01"}})
+        sequential = reconcile_pending_orders(FakeOrders(responses), service_check=account)
+        fake = FakeOrders(responses)
+        parallel = reconcile_pending_orders(fake, service_check=account, read_workers=3)
+        self.assertEqual(sequential, parallel)
+        self.assertEqual(parallel.pending_servers, 1)
+        self.assertEqual(parallel.expired_unpaid_orders, 1)
+        self.assertEqual(sum(path.endswith("/status") for _, path in fake.calls), 4)
+        self.assertTrue(all(method == "GET" for method, _ in fake.calls))
+
+    def test_parallel_failure_stops_future_batches(self):
+        fake = FakeOrders({
+            "/me/order": [101, 102, 103, 104],
+            "/me/order/101/status": order_probe.OrderProbeError("429"),
+            "/me/order/102/status": "delivered",
+            "/me/order/103/status": "cancelled",
+            "/me/order/104/status": "delivered",
+        })
+        with self.assertRaises(PendingOrdersError):
+            reconcile_pending_orders(fake, service_check=account, read_workers=3)
+        self.assertNotIn(("GET", "/me/order/104/status"), fake.calls)
+
     def test_pending_matching_order_is_counted(self):
         for status in ("notPaid", "checking", "delivering", "documentsRequested", "cancelling"):
             with self.subTest(status=status):
