@@ -191,13 +191,22 @@ def audit_commercial(policy: PurchasePolicy, *, stocks: list[Stock],
         results["retained"] = cart_retainer(**record) is True
         return results["retained"]
 
-    retention_args = {"cart_retainer": retain_if_eligible} if cart_retainer is not None else {}
+    retention_args = {}
+    trace = None
+    if cart_retainer is not None:
+        from cart_schema_diagnostic import SchemaTrace
+        trace = SchemaTrace()
+        retention_args = {"cart_retainer": retain_if_eligible, "schema_observer": trace.capture}
+    cart_started = time.monotonic()
     test_order(
         client, datacenter=candidate.datacenter, plan_code="27skle06-v1",
         target_fqn=candidate.fqn, quote_validator=check_quote,
         renewal_observer=check_renewals, identity_observer=check_identity,
         **retention_args,
     )
+    LOG.info("Commercial cart quote/readback took %.2fs", time.monotonic() - cart_started)
+    if trace is not None:
+        LOG.info("Automatic audit: %s", trace.report())
     if "initial" not in results or "renewal" not in results or "gross_renewal" not in results:
         raise PurchaseSafetyError("Incomplete temporary cart commercial evidence")
     _local_guard(journal, quota, policy.max_servers)
