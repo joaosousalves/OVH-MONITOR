@@ -27,17 +27,27 @@ def catalog_quote_evidence(catalog, fqn, dc, quote, *, max_initial, max_monthly)
     setup = []
     monthly_tax = Decimal(0)
     setup_tax = Decimal(0)
-    for component in report["components"]:
+    for index, component in enumerate(report["components"]):
         if not component["verified"]:
             raise PurchaseSafetyError("Incomplete mandatory catalog component")
+        collection = "plans" if index == 0 else "addons"
+        matches = [r for r in catalog[collection] if isinstance(r, dict)
+                   and r.get("planCode") == component["code"]]
+        if len(matches) != 1 or not isinstance(matches[0].get("pricings"), list):
+            raise PurchaseSafetyError("Catalog component changed or missing")
+        default_rows = [r for r in matches[0]["pricings"] if isinstance(r, dict)
+                        and r.get("mode") == "default"]
+        if any(type(r.get("phase")) is not int or r["phase"] not in (0, 1) for r in default_rows):
+            raise PurchaseSafetyError("Unexpected default pricing phase")
         for phase, interval, unit, amounts in ((1, 1, "month", monthly), (0, 0, "none", setup)):
-            rows = [r for r in component["pricingRows"] if r["mode"] == "default" and r["phase"] == phase]
+            rows = [r for r in default_rows if r["phase"] == phase]
             valid = set()
             for row in rows:
-                price, tax = row["price"], row["tax"]
-                if (row["interval"] != interval or row["intervalUnit"] != unit
-                        or type(row["commitment"]) is not int or row["commitment"] != 0
-                        or row["type"] != "rental"
+                inspect_commitment(row)
+                price, tax = row.get("price"), row.get("tax")
+                if (row.get("interval") != interval or row.get("intervalUnit") != unit
+                        or type(row.get("commitment")) is not int or row["commitment"] != 0
+                        or row.get("type") != "rental"
                         or type(price) is not int or price < 0
                         or type(tax) is not int or tax < 0
                         or Decimal(tax) != Decimal(price) * VAT):
