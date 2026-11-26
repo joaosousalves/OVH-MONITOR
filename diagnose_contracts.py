@@ -20,7 +20,7 @@ from order_probe import (TEST_PLANS, test_order, verify_available_test_fqn,
 from purchase_guard import make_api_client, PurchaseSafetyError
 
 DEFAULT_REVIEW = Path("/var/lib/ovh-ksle-purchase/test-contract-review.json")
-TEST_MODELS = ("ks-4", "ks-le-1", "ks-le-2", "ks-le-3")
+TEST_MODELS = ("ks-7", "ks-7-alt", "ks-7-legacy", "ks-4", "ks-le-1", "ks-le-2", "ks-le-3")
 
 
 def commercial_values(stage, payload):
@@ -74,7 +74,20 @@ def diagnose(client, *, review_path=DEFAULT_REVIEW, stock_fetch=retrieve_stock):
     print("Public PT catalog retrieved.", flush=True)
     for model in TEST_MODELS:
         plan = TEST_PLANS[model]
-        stocks = stock_fetch(plan_code=plan)
+        if model.startswith("ks-7"):
+            # The precise plan code depends on the offer version. Only use
+            # a known KS-7 code actually present in the Portuguese catalog.
+            plans = catalog.get("plans", []) if isinstance(catalog, dict) else []
+            if not any(isinstance(p, dict) and p.get("planCode") == plan for p in plans):
+                print(f"{model}: {plan} not in PT catalog; skipped.", flush=True)
+                continue
+        try:
+            stocks = stock_fetch(plan_code=plan)
+        except MonitorError as exc:
+            if model.startswith("ks-7") and str(exc) == f"No {plan} stock records in OVHcloud API response":
+                print(f"{model}: no exact stock records for {plan}; skipped.", flush=True)
+                continue
+            raise
         available = [s for s in stocks if s.available and s.datacenter in ALLOWED_DATACENTERS]
         print(f"{model}: {len(available)} available EU/CA configuration(s)", flush=True)
         for stock in stocks:
