@@ -11,7 +11,7 @@ OVH_CONSUMER_KEY=REPLACE_WITH_CONSUMER_KEY
 # do not overwrite a file already containing your real API credentials.
 OVH_AUTO_BUY_ENABLED=false
 # Owner-approved maximum INITIAL charge, VAT and setup fees included, EUR.
-OVH_AUTO_BUY_MAX_TOTAL_EUR=80.00
+OVH_AUTO_BUY_MAX_TOTAL_EUR=90.00
 # Separate owner-approved maximum MONTHLY renewal, VAT included, EUR.
 # This is a CAP, not a verified OVHcloud renewal quote.
 OVH_AUTO_BUY_MAX_MONTHLY_EUR=37.00
