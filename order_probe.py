@@ -441,7 +441,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                renewal_observer: Any = None,
                identity_observer: Any = None,
                schema_observer: Any = None,
-               cart_retainer: Any = None, receipt_observer: Any = None) -> str:
+               cart_retainer: Any = None, receipt_observer: Any = None,
+               defer_identity_readback: bool = False) -> str:
     """Build and quote a cart; NEVER submit checkout or payment.
 
     Default diagnostics always delete the cart. An explicit retainer may
@@ -452,6 +453,10 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             plan_code != PLAN_CODE or target_fqn is None or
             quote_validator is None or identity_observer is None):
         raise OrderProbeError("Cart retention requires exact KS-LE-6 and commercial validators")
+    if defer_identity_readback and (
+            plan_code != PLAN_CODE or target_fqn is None or
+            cart_retainer is None or receipt_observer is None or identity_observer is None):
+        raise OrderProbeError("Deferred identity requires exact retained KS-LE-6 creation receipts")
     datacenter = datacenter.lower()
     if datacenter not in DATACENTERS:
         raise OrderProbeError(f"Unsupported datacenter: {datacenter}")
@@ -546,7 +551,13 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
             # RENEW labels do not prove VAT-inclusive recurring charges.
             renewal_observer(tuple(item_responses))
         if identity_observer is not None:
-            if target_fqn is None:
+            if defer_identity_readback:
+                # The live orchestrator MUST perform fresh full readback
+                # before checkout, after durable receipt retention.
+                if schema_observer is not None:
+                    schema_observer("readback_deferred", None)
+                identity_observer(identity_unavailable())
+            elif target_fqn is None:
                 if schema_observer is not None:
                     schema_observer("readback_not_requested", None)
                 identity_observer(identity_unavailable())
