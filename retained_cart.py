@@ -59,7 +59,7 @@ def read_retained(path: Path):
         raise RetainedCartError("Unreadable retained cart state") from exc
 
 
-def persist_retained(path: Path, *, cart_id, item_id, fqn, datacenter, expire):
+def persist_retained(path: Path, *, cart_id, item_id, fqn, datacenter, expire, receipts=None):
     """Atomic no-overwrite handoff; caller holds commercial watcher lock."""
     path = Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -69,6 +69,13 @@ def persist_retained(path: Path, *, cart_id, item_id, fqn, datacenter, expire):
                         "fqn": fqn, "datacenter": datacenter,
                         "expire": expire if _expiry(expire) is not None else None,
                         "created_at": datetime.now(timezone.utc).isoformat()})
+    if receipts is not None:
+        if (not isinstance(receipts, list) or not 1 < len(receipts) <= 24
+                or any(not isinstance(r, dict) or set(r) != {"code", "id"}
+                       or not isinstance(r["code"], str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,160}", r["code"])
+                       or type(r["id"]) is not int or not 0 < r["id"] < 10**15 for r in receipts)):
+            raise RetainedCartError("Invalid creation receipt state")
+        record["receipts"] = receipts
     temporary = None
     try:
         with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as handle:
