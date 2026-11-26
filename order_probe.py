@@ -418,8 +418,18 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                quote_validator: Any = None,
                renewal_observer: Any = None,
                identity_observer: Any = None,
-               schema_observer: Any = None) -> str:
-    """Build and quote a temporary cart; NEVER submit checkout or payment."""
+               schema_observer: Any = None,
+               cart_retainer: Any = None) -> str:
+    """Build and quote a cart; NEVER submit checkout or payment.
+
+    Default diagnostics always delete the cart. An explicit retainer may
+    take ownership of a fully built exact KS-LE-6 cart by durably recording
+    its identifier and returning True. Failed builds still clean up.
+    """ 
+    if cart_retainer is not None and (
+            plan_code != PLAN_CODE or target_fqn is None or
+            quote_validator is None or identity_observer is None):
+        raise OrderProbeError("Cart retention requires exact KS-LE-6 and commercial validators")
     datacenter = datacenter.lower()
     if datacenter not in DATACENTERS:
         raise OrderProbeError(f"Unsupported datacenter: {datacenter}")
@@ -446,6 +456,7 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
 
     LOGGER.info("Starting temporary test cart for %s in %s (NO ORDER / NO PAYMENT)", plan_code, datacenter.upper())
     cart_id: str | None = None
+    retained = False
     try:
         cart_response = client.request("POST", "/order/cart", {"ovhSubsidiary": subsidiary})
         if not isinstance(cart_response, dict) or not isinstance(cart_response.get("cartId"), str):
@@ -561,9 +572,18 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                         identity_observer(inspect_manual_cart_identity(
                             plan_code=plan_code, **identity_args,
                         ))
+        if cart_retainer is not None:
+            # The caller must persist the cart before claiming ownership.
+            # Expiry is reported as supplied by OVH, never inferred.
+            retained = cart_retainer(
+                cart_id=cart_id, item_id=item_id, fqn=target_fqn,
+                datacenter=datacenter, expire=cart_response.get("expire"),
+            ) is True
+            if retained:
+                LOGGER.info("Commercial cart retained for review (NO ORDER / NO PAYMENT)")
         return f"Carrinho de teste validado: {plan_code}, {datacenter.upper()}, addons={addons}; total com IVA: {price}. Nenhuma encomenda criada."
     finally:
-        if cart_id is not None:
+        if cart_id is not None and not retained:
             try:
                 client.request("DELETE", "/order/cart/" + quote(cart_id, safe=""))
                 LOGGER.info("Temporary test cart deleted")
