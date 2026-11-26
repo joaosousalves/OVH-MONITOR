@@ -308,6 +308,23 @@ def save_alerted(path: Path, alerted: set[str]) -> None:
             temp_path.unlink(missing_ok=True)
 
 
+def publish_commercial_event(stocks: list[Stock], path: Path) -> bool:
+    """Publish stock edges independently of SMTP; never creates a cart.
+
+    A separate systemd.path starts the existing fail-closed commercial
+    watcher, which revalidates stock and deduplicates audits under its lock.
+    Missing stock rows do not reset an observed availability edge.
+    """
+    previous = load_alerted(path)
+    new, retained = transition(monitored_stocks(stocks), previous)
+    current = retained | {stock.key for stock in new}
+    if current == previous:
+        return False
+    save_alerted(path, current)
+    LOGGER.info("Commercial stock event: %d available key(s), %d new", len(current), len(new))
+    return True
+
+
 def transition(stocks: list[Stock], previous: set[str]) -> tuple[list[Stock], set[str]]:
     """Find new stock events; preserve history for temporarily missing rows.
 
@@ -736,6 +753,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.list:
             print_stock(stocks)
             return 0
+        if not args.check:
+            event_file = os.getenv("OVH_COMMERCIAL_EVENT_FILE", "").strip()
+            if event_file:
+                try:
+                    publish_commercial_event(stocks, Path(event_file))
+                except MonitorError as exc:
+                    # Stock email remains independent; fallback audit timer
+                    # continues to operate if event publication fails.
+                    LOGGER.error("Cannot publish commercial stock event: %s", exc)
         config = None if args.check else mail_config()
         # Only consult cached catalog pricing when a new stock alert is pending.
         # A failed price lookup must never suppress or delay the stock email.
