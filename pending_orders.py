@@ -7,6 +7,7 @@ cannot yet be linked reliably, so the combined quota remains inconclusive.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import logging
@@ -222,18 +223,36 @@ def _get(client: OVHCartClient, path: str, label: str) -> Any:
 
 def reconcile_pending_orders(client: OVHCartClient, max_servers: int = 2,
                              *, service_check=reconcile_account,
-                             as_of_utc_date: date | None = None) -> PendingOrderInventory:
+                             as_of_utc_date: date | None = None,
+                             read_workers: int = 1) -> PendingOrderInventory:
     """Exhaustive bounded GET scan; no POST, temporary carts, email or writes."""
     if as_of_utc_date is not None and type(as_of_utc_date) is not date:
         raise PendingOrdersError("Invalid inventory reference date")
+    if type(read_workers) is not int or not 1 <= read_workers <= 3:
+        raise PendingOrdersError("Invalid read-only inventory concurrency")
     today_utc = as_of_utc_date or datetime.now(timezone.utc).date()
     service_inventory = service_check(client, max_servers)
     ids = validate_order_ids(_get(client, "/me/order", "account order list"))
     pending = 0
     open_orders = 0
     expired_unpaid_orders = 0
-    for order_id in ids:
-        status = _order_status(_get(client, f"/me/order/{order_id}/status", "order status"))
+    def status_for(order_id):
+        return _order_status(_get(client, f"/me/order/{order_id}/status", "order status"))
+
+    def fresh_statuses():
+        if read_workers == 1:
+            for order_id in ids:
+                yield order_id, status_for(order_id)
+            return
+        # At most three independent GETs in flight. Do not queue the entire
+        # order history: a failed request stops subsequent batches.
+        with ThreadPoolExecutor(max_workers=read_workers) as pool:
+            for start in range(0, len(ids), read_workers):
+                batch = ids[start:start + read_workers]
+                statuses = list(pool.map(status_for, batch))
+                yield from zip(batch, statuses)
+
+    for order_id, status in fresh_statuses():
         if status in TERMINAL_STATUSES:
             continue
         if status == "notPaid":
