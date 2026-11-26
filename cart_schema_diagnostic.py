@@ -14,7 +14,7 @@ from typing import Any
 STAGES = frozenset({
     "base_item", "addon_item", "checkout", "items_get", "items_expanded",
     "configurations_get", "configurations_expanded", "readback_unavailable",
-    "readback_conflict", "readback_not_requested",
+    "readback_conflict", "readback_not_requested", "readback_deferred",
 })
 MAX_EVENTS = 32
 MAX_ROWS = 24
@@ -166,7 +166,9 @@ class SchemaTrace:
             result = _readback(payload, CONFIG_FIELDS, configurations=True)
         else:
             result = "read-only identity evidence unavailable" if stage == "readback_unavailable" else (
-                "read-only identity mismatch" if stage == "readback_conflict" else "no exact FQN supplied"
+                "read-only identity mismatch" if stage == "readback_conflict" else (
+                    "full identity readback deferred until live verification" if stage == "readback_deferred" else "no exact FQN supplied"
+                )
             )
         self.lines.append(stage + ": " + result)
 
