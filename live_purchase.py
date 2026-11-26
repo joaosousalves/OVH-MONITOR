@@ -83,7 +83,9 @@ def _reconcile_local(client, quota, retained_path):
         quota.update_outcome(slot=row["slot"], status="confirmed", order_id=row["orderId"])
         # The only retained cart belongs to the previously submitted checkout.
         # Do not DELETE it; OVH owns the submitted order lifecycle.
-        retained_path.unlink(missing_ok=True)
+        record = read_retained(retained_path)
+        if record is not None and row.get("cartId") == record["cart_id"]:
+            retained_path.unlink(missing_ok=True)
     return quota.read()
 
 
@@ -130,7 +132,13 @@ def verify_retained(client, policy, record, review_path):
         raise PurchaseSafetyError("Review contract terms for no fixed commitment; fingerprint " + digest)
     if not inspect_payment_evidence(client).saved_default_valid:
         raise PurchaseSafetyError("No verified valid default one-click payment method")
-    return initial.with_tax
+    final_quote = client.request("GET", base + "/checkout")
+    final_initial = validate_initial_price(final_quote, min(policy.max_total_eur, reference.first_payment_gross))
+    final_digest, _ = contract_digest(final_quote.get("contracts"))
+    inspect_commitment(final_quote)
+    if final_initial != initial or final_digest != digest:
+        raise PurchaseSafetyError("Quote or contracts changed during checkout verification")
+    return final_initial.with_tax
 
 
 def prepare_live_cart(policy, client, stocks, journal, quota, retained_path):
@@ -187,7 +195,7 @@ def prepare_live_cart(policy, client, stocks, journal, quota, retained_path):
         raise PurchaseSafetyError("Cart could not be retained")
     return (f"LIVE CART PREPARED: {candidate.fqn} at {candidate.datacenter.upper()}; "
             f"initial {evidence['initial'].with_tax:.2f} EUR incl. VAT; "
-            f"identity {evidence['identity']}; no order yet.\n" + trace.report())
+            f"identity {evidence['identity']}; no order yet.\n" + trace.report()[:4500])
 
 
 def try_retained_checkout(policy, client, journal, quota, retained_path):
@@ -216,6 +224,11 @@ def try_retained_checkout(policy, client, journal, quota, retained_path):
         record = read_retained(retained_path)
         if record is None:
             return None
+        if any(row.get("cartId") == record["cart_id"] for row in entries):
+            # A crash between confirming a delivery and unlinking the
+            # retained state must never allow the same cart to be reused.
+            retained_path.unlink()
+            return None
         try:
             ensure_no_active_cart(retained_path, client)
         except RetainedCartError as exc:
@@ -231,7 +244,8 @@ def try_retained_checkout(policy, client, journal, quota, retained_path):
             raise PurchaseSafetyError("Remote quota full or not reconciled")
         total = verify_retained(client, policy, record,
                                 retained_path.with_name("contract-review.json"))
-        slot = quota.reserve(fqn=record["fqn"], datacenter=record["datacenter"], total=total)
+        slot = quota.reserve(fqn=record["fqn"], datacenter=record["datacenter"], total=total,
+                             cart_id=record["cart_id"])
         if slot is None:
             raise PurchaseSafetyError("Local quota reached")
         try:
