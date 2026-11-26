@@ -127,7 +127,7 @@ def save_state(path: Path, data: dict[str, Any]) -> None:
 
 def watch_once(policy: PurchasePolicy, *, stocks: list[Stock], path: Path,
                audit: Callable[[], str], notify: Callable[[Stock, str], None],
-               now: float | None = None) -> str:
+               now: float | None = None, fast_new_edge: bool = False) -> str:
     """Audit once on an observed availability edge, with durable retry gates.
 
     Persists an attempt *before* invoking cart code so a crash cannot cause
@@ -199,7 +199,8 @@ def watch_once(policy: PurchasePolicy, *, stocks: list[Stock], path: Path,
             retry = min(MAX_RETRY_SECONDS, MIN_RETRY_SECONDS * (2 ** min(failures, 3)))
             if now - state["last_attempt_at"] < retry:
                 return "COOLDOWN: previous commercial audit pending/failed; no new cart."
-        elif now - state["last_attempt_at"] < MIN_RETRY_SECONDS:
+        elif (now - state["last_attempt_at"] < MIN_RETRY_SECONDS
+              and not (fast_new_edge and candidate.key not in previous)):
             return "COOLDOWN: recent commercial audit; no new cart."
 
         failures = (attempt["failures"] + 1 if attempt is not None and
@@ -233,7 +234,8 @@ def watch_once(policy: PurchasePolicy, *, stocks: list[Stock], path: Path,
         state["attempt"]["status"] = "complete"
         state["attempt"]["emailed"] = True
         save_state(path, state)
-        return "SENT: commercial audit email delivered; checkout/payment disabled."
+        return ("SENT: live checkout result emailed." if "\nLIVE CHECKOUT" in report
+                else "SENT: commercial audit email delivered; checkout/payment disabled.")
     finally:
         os.close(fd)
 
@@ -244,6 +246,22 @@ def run_commercial_watch() -> int:
         policy = PurchasePolicy.from_env()
         smtp = mail_config()
         watch_path = Path(os.getenv("OVH_COMMERCIAL_WATCH_STATE", DEFAULT_WATCH_PATH))
+        from live_purchase import enabled as live_enabled, try_retained_checkout
+        live = live_enabled()
+        retained_path = watch_path.with_name("retained-cart.json")
+        quota = PurchaseQuota(
+            Path(os.getenv("OVH_AUTO_BUY_QUOTA_JOURNAL", DEFAULT_PATH)),
+            max_servers=policy.max_servers,
+        )
+        journal = OrderJournal(Path(os.getenv("OVH_AUTO_BUY_JOURNAL", DEFAULT_JOURNAL)))
+        if live and (retained_path.exists() or retained_path.is_symlink() or quota.path.exists()):
+            status = try_retained_checkout(policy, make_api_client(), journal, quota, retained_path)
+            if status is not None:
+                LOG.info(status)
+                if status.startswith(("LIVE CHECKOUT SUBMITTED", "LIVE CHECKOUT UNKNOWN")):
+                    send_mail(smtp, "[OVH] KS-LE-6 live checkout result", status)
+                record_heartbeat(watch_path.with_name("commercial-heartbeat.json"))
+                return 0
         stock_cooldown = watch_path.with_name("commercial-stock-backoff.json")
         if api_cooldown_active(stock_cooldown):
             return 0
@@ -265,28 +283,38 @@ def run_commercial_watch() -> int:
                 max_servers=policy.max_servers,
             )
             journal = OrderJournal(Path(os.getenv("OVH_AUTO_BUY_JOURNAL", DEFAULT_JOURNAL)))
-            return audit_commercial(
+            report = audit_commercial(
                 policy, stocks=stocks, client=api, journal=journal, quota=quota,
                 cart_retainer=lambda **record: persist_retained(retained_path, **record),
+                allow_confirmed=live,
             )
+            if live and retained_path.exists():
+                status = try_retained_checkout(policy, api, journal, quota, retained_path)
+                if status is not None:
+                    LOG.info(status)
+                    report += "\n" + status
+            return report
 
         def mail_result(candidate: Stock, report: str) -> None:
             send_mail(
                 smtp,
-                f"[OVH AUDIT] KS-LE-6 {candidate.datacenter.upper()} (NO PURCHASE)",
+                (f"[OVH LIVE] KS-LE-6 {candidate.datacenter.upper()} checkout status"
+                 if live else f"[OVH AUDIT] KS-LE-6 {candidate.datacenter.upper()} (NO PURCHASE)"),
                 report + "\n\n" + f"Ver na OVHcloud: {PRODUCT_URL}\n"
-                + "Nenhuma encomenda foi submetida. Verifique condições comerciais manualmente.",
+                + ("Consulte o resultado LIVE CHECKOUT; pagamento não confirmado."
+                   if live else "Nenhuma encomenda foi submetida. Verifique condições comerciais manualmente."),
             )
 
         result = watch_once(
             policy, stocks=stocks, path=watch_path,
-            audit=perform_audit, notify=mail_result,
+            audit=perform_audit, notify=mail_result, fast_new_edge=live,
         )
         if result.startswith(("WAITING:", "UNCHANGED:", "SENT:")):
             record_heartbeat(watch_path.with_name("commercial-heartbeat.json"))
         LOG.info(result)
         return 0
     except (WatchStateError, HealthError, PurchaseSafetyError, MonitorError, OrderProbeError,
+            PendingOrdersError, AccountReconciliationError,
             ValueError, TypeError, OSError) as exc:
         LOG.error("Commercial watcher stopped safely (no purchase): %s", exc)
         return 1
