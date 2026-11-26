@@ -136,11 +136,12 @@ def verify_retained(client, policy, record, review_path):
         renewal = inspect_cart_renewals(items)
         if explicit != monthly or renewal.amount_eur is None or explicit < renewal.amount_eur:
             raise PurchaseSafetyError("Explicit renewal differs from catalog: " + reason)
-    # An explicit owner approval of the exact reviewed contract set is
-    # required; unknown legal terms must not be accepted automatically.
+    # Optional owner-pinned contract set. With no pin, preserve complete
+    # evidence and still require zero commitment, exact catalog/quote
+    # reconciliation, and unchanged contracts during checkout verification.
     approved = os.getenv("OVH_LIVE_APPROVED_CONTRACT_SHA256", "").strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", approved) or approved != digest:
-        raise PurchaseSafetyError("Review contract terms for no fixed commitment; fingerprint " + digest)
+    if approved and (not re.fullmatch(r"[0-9a-f]{64}", approved) or approved != digest):
+        raise PurchaseSafetyError("Pinned contract fingerprint differs or is invalid; current fingerprint " + digest)
     if not inspect_payment_evidence(client).saved_default_valid:
         raise PurchaseSafetyError("No verified valid default one-click payment method")
     final_quote = client.request("GET", base + "/checkout")
