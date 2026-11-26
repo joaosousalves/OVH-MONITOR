@@ -1,0 +1,9 @@
+[Unit]
+Description=Trigger commercial audit immediately on KS-LE-6 stock changes
+
+[Path]
+PathChanged=/var/lib/ovh-ksle-monitor/commercial-event.json
+Unit=ovh-ksle-commercial-watch.service
+
+[Install]
+WantedBy=multi-user.target
