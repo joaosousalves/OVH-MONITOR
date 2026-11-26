@@ -441,7 +441,7 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                renewal_observer: Any = None,
                identity_observer: Any = None,
                schema_observer: Any = None,
-               cart_retainer: Any = None) -> str:
+               cart_retainer: Any = None, receipt_observer: Any = None) -> str:
     """Build and quote a cart; NEVER submit checkout or payment.
 
     Default diagnostics always delete the cart. An explicit retainer may
@@ -497,6 +497,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
         item_id = order_item.get("itemId") if isinstance(order_item, dict) else None
         if not isinstance(item_id, int) or item_id <= 0:
             raise OrderProbeError("Adding server to cart returned no valid itemId")
+        if receipt_observer is not None:
+            receipt_observer(plan_code, order_item)
         if schema_observer is not None:
             schema_observer("base_item", order_item)
         if "duration" in order_item and order_item["duration"] != "P1M":
@@ -515,6 +517,8 @@ def test_order(client: OVHCartClient, datacenter: str = "bhs",
                 "pricingMode": offer["pricingMode"],
                 "quantity": 1,
             })
+            if receipt_observer is not None:
+                receipt_observer(addon, addon_response)
             if item_responses is not None:
                 item_responses.append(addon_response)
             if schema_observer is not None:
