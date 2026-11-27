@@ -42,6 +42,8 @@ class PendingOrderInventory:
     open_orders: int
     pending_servers: int
     expired_unpaid_orders: int = 0
+    target_pending_ids: tuple[int, ...] = ()
+    delivered_ids: tuple[int, ...] = ()
 
     @property
     def overlap_unverified(self) -> bool:
@@ -236,6 +238,8 @@ def reconcile_pending_orders(client: OVHCartClient, max_servers: int = 2,
     pending = 0
     open_orders = 0
     expired_unpaid_orders = 0
+    target_pending_ids = []
+    delivered_ids = []
     def status_for(order_id):
         return _order_status(_get(client, f"/me/order/{order_id}/status", "order status"))
 
@@ -254,6 +258,8 @@ def reconcile_pending_orders(client: OVHCartClient, max_servers: int = 2,
 
     for order_id, status in fresh_statuses():
         if status in TERMINAL_STATUSES:
+            if status == "delivered":
+                delivered_ids.append(order_id)
             continue
         if status == "notPaid":
             metadata = _get(client, f"/me/order/{order_id}", "unpaid order expiration")
@@ -273,9 +279,13 @@ def reconcile_pending_orders(client: OVHCartClient, max_servers: int = 2,
                 raise PendingOrdersError("Mismatched pending order detail identifier")
             extension = _get(client, base + "/extension", "order plan extension")
             rows.append((detail, extension))
-        pending += count_order_items(rows)
+        count = count_order_items(rows)
+        pending += count
+        if count:
+            target_pending_ids.append(order_id)
     return PendingOrderInventory(
         service_inventory, len(ids), open_orders, pending, expired_unpaid_orders,
+        tuple(target_pending_ids), tuple(delivered_ids),
     )
 
 
