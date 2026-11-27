@@ -247,7 +247,7 @@ def run_commercial_watch() -> int:
         policy = PurchasePolicy.from_env()
         smtp = mail_config()
         watch_path = Path(os.getenv("OVH_COMMERCIAL_WATCH_STATE", DEFAULT_WATCH_PATH))
-        from live_purchase import enabled as live_enabled, try_retained_checkout, prepare_live_cart
+        from live_purchase import enabled as live_enabled
         live = live_enabled()
         LOG.info(
             "KS-LE-6 (27skle06-v1) 128GB watcher: mode=%s; max servers=%d; "
@@ -262,14 +262,28 @@ def run_commercial_watch() -> int:
             max_servers=policy.max_servers,
         )
         journal = OrderJournal(Path(os.getenv("OVH_AUTO_BUY_JOURNAL", DEFAULT_JOURNAL)))
-        if live and (retained_path.exists() or retained_path.is_symlink() or quota.path.exists()):
-            status = try_retained_checkout(policy, make_api_client(), journal, quota, retained_path)
-            if status is not None:
-                LOG.info(status)
-                if status.startswith(("LIVE CHECKOUT SUBMITTED", "LIVE CHECKOUT UNKNOWN")):
-                    send_mail(smtp, "[OVH] KS-LE-6 live checkout result", status)
-                record_heartbeat(watch_path.with_name("commercial-heartbeat.json"))
-                return 0
+        if live:
+            # Separate live lifecycle: email deduplication must never gate the
+            # second purchase, and known submissions do not wait for payment.
+            from live_batch import run_live_batch
+            stock_cooldown = watch_path.with_name("commercial-stock-backoff.json")
+            stocks = []
+            if not api_cooldown_active(stock_cooldown):
+                try:
+                    stocks = retrieve_stock()
+                except APITransientError as exc:
+                    apply_api_failure(stock_cooldown, exc)
+                else:
+                    until, failures = read_cooldown(stock_cooldown)
+                    if until or failures:
+                        write_cooldown(stock_cooldown, 0, 0)
+            result = run_live_batch(policy, stocks, journal, quota,
+                                    watch_path.parent, make_api_client)
+            LOG.info(result)
+            record_heartbeat(watch_path.with_name("commercial-heartbeat.json"))
+            if "LIVE CHECKOUT SUBMITTED:" in result or "LIVE CHECKOUT UNKNOWN:" in result:
+                send_mail(smtp, "[OVH LIVE] KS-LE-6 checkout results", result)
+            return 0
         stock_cooldown = watch_path.with_name("commercial-stock-backoff.json")
         if api_cooldown_active(stock_cooldown):
             return 0
@@ -291,19 +305,10 @@ def run_commercial_watch() -> int:
                 max_servers=policy.max_servers,
             )
             journal = OrderJournal(Path(os.getenv("OVH_AUTO_BUY_JOURNAL", DEFAULT_JOURNAL)))
-            if live:
-                report = prepare_live_cart(policy, api, stocks, journal, quota, retained_path)
-            else:
-                report = audit_commercial(
-                    policy, stocks=stocks, client=api, journal=journal, quota=quota,
-                    cart_retainer=lambda **record: persist_retained(retained_path, **record),
-                )
-            if live and retained_path.exists():
-                status = try_retained_checkout(policy, api, journal, quota, retained_path)
-                if status is not None:
-                    LOG.info(status)
-                    report += "\n" + status
-            return report
+            return audit_commercial(
+                policy, stocks=stocks, client=api, journal=journal, quota=quota,
+                cart_retainer=lambda **record: persist_retained(retained_path, **record),
+            )
 
         def mail_result(candidate: Stock, report: str) -> None:
             send_mail(
@@ -324,7 +329,7 @@ def run_commercial_watch() -> int:
         LOG.info(result)
         return 0
     except (WatchStateError, HealthError, PurchaseSafetyError, MonitorError, OrderProbeError,
-            PendingOrdersError, AccountReconciliationError,
+            PendingOrdersError, AccountReconciliationError, CommitmentSafetyError,
             ValueError, TypeError, OSError) as exc:
         LOG.error("Commercial watcher stopped safely (no purchase): %s", exc)
         return 1
