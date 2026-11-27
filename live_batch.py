@@ -80,7 +80,10 @@ def _submit_one(client, quota, slot, record, path):
         if current["status"] == "reserved":
             quota.update_outcome(slot=slot, status="unknown")
         return f"LIVE CHECKOUT UNKNOWN: slot {slot}; inspect OVH Manager; no automatic retry"
-    path.unlink(missing_ok=True)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        LOG.warning("Submitted cart handoff cleanup deferred; durable order retained")
     return (f"LIVE CHECKOUT SUBMITTED: slot {slot}; order {order_id}; "
             f"{record['fqn']} at {record['datacenter'].upper()}; "
             f"payment requested, NOT confirmed; POST {time.monotonic()-started:.2f}s")
@@ -108,8 +111,9 @@ def run_live_batch(policy, stocks, journal, quota, directory, client_factory):
             return "LIVE CHECKOUT BLOCKED: uncertain earlier checkout; manual reconciliation required"
         paths = _paths(directory)
         candidate = choose_candidate(stocks, policy)
-        if len(entries) >= policy.max_servers:
-            # Do not create any carts when the lifetime local quota is full.
+        no_work = candidate is None and not any(p.exists() or p.is_symlink() for p in paths)
+        if len(entries) >= policy.max_servers or no_work:
+            # Do not create carts when the quota is full or there is no stock.
             # Poll the two known order IDs only; full inventory on delivery.
             submitted = [r for r in entries if r["status"] == "submitted"]
             if submitted:
@@ -118,9 +122,9 @@ def run_live_batch(policy, stocks, journal, quota, directory, client_factory):
                 if any((v.get("status") if isinstance(v, dict) else v) == "delivered" for v in states):
                     remote = reconcile_pending_orders(client, policy.max_servers, read_workers=3)
                     entries = _mark_delivery(quota, entries, remote)
-            return "LIVE CHECKOUT: quota reached; " + str(quota.counts(entries))
-        if candidate is None and not any(p.exists() or p.is_symlink() for p in paths):
-            return "WAITING: no eligible KS-LE-6 stock; no commercial cart or email."
+            if len(entries) >= policy.max_servers:
+                return "LIVE CHECKOUT: quota reached; " + str(quota.counts(entries))
+            return "WAITING: no eligible KS-LE-6 stock; " + str(quota.counts(entries))
         client = client_factory()
         active = []
         for path in paths:
@@ -163,17 +167,21 @@ def run_live_batch(policy, stocks, journal, quota, directory, client_factory):
                         policy.max_servers-effective_usage(entries, remote))
         if remote.overlap_unverified or remaining <= 0:
             return "LIVE CHECKOUT BLOCKED: remote quota full or inconclusive"
-        validated = []
-        for path, record, cart_client in active:
-            if len(validated) >= remaining:
-                break
+        def verify(item):
+            path, record, cart_client = item
             try:
                 total = verify_retained(cart_client, policy, record,
                                         path.with_name(path.stem + "-contract-review.json"))
-                validated.append((path, record, cart_client, total))
+                return (path, record, cart_client, total)
             except (PurchaseSafetyError, OrderProbeError, CommitmentSafetyError):
                 LOG.warning("Live batch final verification blocked for %s at %s",
                             record["fqn"], record["datacenter"])
+                return None
+
+        # Independent cart reads can run concurrently. The final quotes are
+        # refreshed close together, then the global quota is reserved once.
+        with ThreadPoolExecutor(max_workers=min(2, len(active))) as pool:
+            validated = [v for v in pool.map(verify, active) if v is not None][:remaining]
         if not validated:
             return "LIVE CHECKOUT BLOCKED: no cart passed final verification"
         if not enabled():
