@@ -87,6 +87,7 @@ class PurchaseQuota:
             raise PurchaseSafetyError("Unrecognized purchase quota schema or record count")
         attempts = payload["attempts"]
         slots: set[int] = set()
+        order_ids: set[int] = set()
         for item in attempts:
             if not isinstance(item, dict):
                 raise PurchaseSafetyError("Invalid purchase quota entry")
@@ -105,6 +106,9 @@ class PurchaseQuota:
             if item["status"] in ("submitted", "confirmed"):
                 if type(item.get("orderId")) is not int or not 0 < item["orderId"] < 10**15:
                     raise PurchaseSafetyError("Submitted record requires known order ID")
+                if item["orderId"] in order_ids:
+                    raise PurchaseSafetyError("Repeated order ID in purchase quota")
+                order_ids.add(item["orderId"])
             elif "orderId" in item:
                 raise PurchaseSafetyError("Unsubmitted or uncertain record has unexpected order ID")
             if "cartId" in item and (not isinstance(item["cartId"], str)
@@ -116,7 +120,16 @@ class PurchaseQuota:
             slots.add(slot)
         if sorted(slots) != list(range(1, len(attempts) + 1)):
             raise PurchaseSafetyError("Nonconsecutive purchase slots; refusing further purchases")
+        for key, expected in self.counts(attempts).items():
+            if key in payload and (type(payload[key]) is not int or payload[key] != expected):
+                raise PurchaseSafetyError("Purchase counter inconsistent with durable ledger")
         return attempts
+
+    @staticmethod
+    def counts(attempts):
+        return {"reservedCount": len(attempts),
+                "submittedCount": sum(r["status"] in ("submitted", "confirmed") for r in attempts),
+                "confirmedCount": sum(r["status"] == "confirmed" for r in attempts)}
 
     def _write(self, attempts: list[dict]) -> None:
         tmp = None
@@ -126,7 +139,7 @@ class PurchaseQuota:
                                              delete=False) as file:
                 tmp = Path(file.name)
                 os.fchmod(file.fileno(), 0o600)
-                json.dump({"schema": SCHEMA, "attempts": attempts}, file, sort_keys=True)
+                json.dump({"schema": SCHEMA, "attempts": attempts, **self.counts(attempts)}, file, sort_keys=True)
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(tmp, self.path)
@@ -205,6 +218,41 @@ class PurchaseQuota:
 
         return self._locked(apply)
 
+    def reserve_batch(self, candidates, *, expected_entries):
+        """Atomically reserve all validated carts before parallel checkout.
+
+        Existing acknowledged submissions may occupy a slot. Unknown or
+        reserved entries always block a NEW batch. Snapshot must still match.
+        """
+        if not isinstance(candidates, list) or not 1 <= len(candidates) <= 2:
+            raise PurchaseSafetyError("Invalid checkout batch size")
+        def apply(attempts):
+            if attempts != expected_entries:
+                raise PurchaseSafetyError("Purchase ledger changed during verification")
+            if any(r["status"] in ("reserved", "unknown") for r in attempts):
+                raise PurchaseSafetyError("Previous purchase is unresolved")
+            if len(attempts) + len(candidates) > self.max_servers:
+                raise PurchaseSafetyError("Global purchase quota exceeded")
+            ids = {r.get("cartId") for r in attempts}
+            slots = []
+            for item in candidates:
+                fqn, dc, total, cid = (item[k] for k in ("fqn", "datacenter", "total", "cart_id"))
+                if (fqn not in self.approved or dc not in DATACENTERS or
+                        not isinstance(total, Decimal) or not total.is_finite() or
+                        not Decimal("0") < total <= Decimal("90.00") or
+                        not isinstance(cid, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", cid) or cid in ids):
+                    raise PurchaseSafetyError("Invalid or duplicate batch cart")
+                ids.add(cid)
+                slot = len(attempts) + 1
+                slots.append(slot)
+                attempts.append({"slot": slot, "planCode": PLAN_CODE, "fqn": fqn,
+                                 "datacenter": dc, "totalEur": str(parse_eur(total, label="initial EUR total")),
+                                 "cartId": cid, "status": "reserved",
+                                 "createdAt": datetime.now(timezone.utc).isoformat()})
+            self._write(attempts)
+            return slots
+        return self._locked(apply)
+
     def update_outcome(self, *, slot: int, status: str,
                        order_id: int | None = None) -> None:
         """Only reserved->submitted/unknown, submitted->confirmed.
@@ -234,6 +282,8 @@ class PurchaseQuota:
                 raise PurchaseSafetyError("Unsafe purchase outcome transition")
             if status == "confirmed" and record.get("orderId") != order_id:
                 raise PurchaseSafetyError("Order ID differs from existing submitted order")
+            if order_id is not None and any(r is not record and r.get("orderId") == order_id for r in attempts):
+                raise PurchaseSafetyError("Repeated order ID in purchase quota")
             record["status"] = status
             record["updatedAt"] = datetime.now(timezone.utc).isoformat()
             if order_id is not None:
@@ -255,6 +305,8 @@ def run_quota_status() -> int:
         attempts = quota.read()
         print(f"KS-LE-6 purchase quota: {len(attempts)}/{quota.max_servers} "
               "reserved slots (local monitor ledger, not account-wide).")
+        counts = quota.counts(attempts)
+        print(f"Submitted: {counts['submittedCount']}/{quota.max_servers}; confirmed delivery: {counts['confirmedCount']}/{quota.max_servers}")
         for item in attempts:
             print(
                 f"  Slot {item['slot']}: {item['fqn']} / "
@@ -265,7 +317,7 @@ def run_quota_status() -> int:
         ))
         print("All four 128GB disk layouts are approved as purchase preferences.")
         print("Same or different disks can fill both slots, with global max two.")
-        print("Only Europe or Canada; checkout DISABLED. No reservation created.")
+        print("Only Europe or Canada; status command is read-only. No reservation created.")
         return 0
     except (PurchaseSafetyError, OSError, ValueError) as exc:
         print(f"Quota status unavailable; purchases blocked: {exc}")
