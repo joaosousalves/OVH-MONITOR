@@ -106,7 +106,7 @@ class LiveBatchTests(unittest.TestCase):
         self.assertEqual(batch.effective_usage(entries, remote), 2)
 
     def test_only_validated_cart_is_submitted(self):
-        def verify(client, record, path):
+        def verify(client, policy, record, path):
             if record["cart_id"] == "cart-b":
                 raise PurchaseSafetyError("invalid quote")
             return Decimal("66.40")
