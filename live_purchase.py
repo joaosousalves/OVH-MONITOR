@@ -161,7 +161,7 @@ def verify_retained(client, policy, record, review_path):
     return final_initial.with_tax
 
 
-def prepare_live_cart(policy, client, stocks, journal, quota, retained_path):
+def prepare_live_cart(policy, client, stocks, journal, quota, retained_path, *, allow_submitted=False):
     """Build immediately after a fresh stock poll; all billable checks follow.
 
     No remote inventory scan is needed before a non-billable cart. The
@@ -173,7 +173,8 @@ def prepare_live_cart(policy, client, stocks, journal, quota, retained_path):
         raise PurchaseSafetyError("Unresolved legacy purchase journal")
     quota._check_legacy()
     entries = quota.read()
-    if len(entries) >= policy.max_servers or any(r["status"] in OPEN_STATES for r in entries):
+    blocked_states = ("reserved", "unknown") if allow_submitted else OPEN_STATES
+    if len(entries) >= policy.max_servers or any(r["status"] in blocked_states for r in entries):
         raise PurchaseSafetyError("Local quota unavailable")
     if policy.max_total_eur > Decimal("90.00") or policy.max_monthly_eur is None or policy.max_monthly_eur > Decimal("37.00"):
         raise PurchaseSafetyError("Live caps must be <= 90 initial / 37 monthly EUR")
